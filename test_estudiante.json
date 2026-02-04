@@ -1,0 +1,21 @@
+{
+  "nombreCompleto": "Juan Pérez García",
+  "correoEstudiante": "juan.perez@test.com",
+  "numeroDocumento": "12345678",
+  "tipoDocumento": "CC",
+  "fechaNacimiento": "2010-03-15",
+  "edad": 14,
+  "sexo": "MASCULINO",
+  "direccionResidencia": "Calle 123 #45-67",
+  "barrio": "Centro",
+  "celularEstudiante": "3001234567",
+  "whatsappEstudiante": "3001234567",
+  "nombreTutor": "María García",
+  "telefonoTutor": "3009876543",
+  "correoTutor": "maria.garcia@test.com",
+  "nivelActual": "INICIANTE",
+  "estado": true,
+  "sede": {
+    "idSede": 1
+  }
+}
