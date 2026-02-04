@@ -102,12 +102,12 @@ Se implementó un sistema completo de notificaciones automáticas por WhatsApp p
 ### 2. application.properties
 ```properties
 # Configuración de Twilio añadida
-twilio.account-sid=AC2bcce29a24f56207a9f57ffde1d6a560
-twilio.auth-token=f8dfd1a6c21eb72a1fd09c6a4b6ec5a1
-twilio.whatsapp-from=whatsapp:+14155238886
+twilio.account-sid=${TWILIO_ACCOUNT_SID:ACxxxxxxxxxxxxxxxxxxxxxxxxxx}
+twilio.auth-token=${TWILIO_AUTH_TOKEN:xxxxxxxxxxxxxxxxxxxxxxxxxxxx}
+twilio.whatsapp-from=${TWILIO_WHATSAPP_FROM:whatsapp:+14155238886}
 twilio.enabled=true
 twilio.sandbox=true
-twilio.content-sid=HXb5b62575e6e4ff6129ad7c8efe1f983e
+twilio.content-sid=${TWILIO_CONTENT_SID:HXxxxxxxxxxxxxxxxxxxxxxxxxxx}
 
 # Configuración de recordatorios
 recordatorio.enabled=true
@@ -163,10 +163,10 @@ private static final String[] PUBLIC_URLS = {
 ### Credenciales Configuradas
 | Parámetro | Valor |
 |-----------|-------|
-| Account SID | `AC2bcce29a24f56207a9f57ffde1d6a560` |
-| Auth Token | `f8dfd1a6c21eb72a1fd09c6a4b6ec5a1` |
+| Account SID | `${TWILIO_ACCOUNT_SID}` |
+| Auth Token | `${TWILIO_AUTH_TOKEN}` |
 | WhatsApp From | `+14155238886` (Sandbox) |
-| Content SID | `HXb5b62575e6e4ff6129ad7c8efe1f983e` |
+| Content SID | `${TWILIO_CONTENT_SID}` |
 
 ### Modo Sandbox
 - El sandbox de Twilio requiere que cada número receptor haya enviado previamente el código "join whole-lady" al número +14155238886
