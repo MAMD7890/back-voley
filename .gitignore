@@ -35,3 +35,10 @@ build/
 ### Oracle JDK ###
 oracleJdk-25/
 **/oracleJdk-25/**
+### Environment & Configuration ###
+.env
+.env.local
+*.properties.local
+src/main/resources/application.properties
+src/main/resources/application-*.properties
+!src/main/resources/application.properties.example
