@@ -121,9 +121,7 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers(PUBLIC_URLS).permitAll()
-                    .requestMatchers("/api/auth/login").permitAll()
-                    .requestMatchers("/api/auth/register").permitAll()
-                    .requestMatchers("/api/auth/refresh-token").permitAll()
+                    .requestMatchers("/api/auth/**").permitAll()
                     .anyRequest().authenticated()
             )
             .authenticationProvider(authenticationProvider())
