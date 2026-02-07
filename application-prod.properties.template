@@ -1,0 +1,85 @@
+# application-prod.properties - TEMPLATE PARA PRODUCCIÓN
+
+## ========================
+## CONFIGURACIÓN SERVIDOR
+## ========================
+server.port=8080
+server.servlet.context-path=/
+
+## ========================
+## CONFIGURACIÓN MYSQL/RDS
+## ========================
+# Cambiar con tus valores reales
+spring.datasource.url=jdbc:mysql://tu-rds-endpoint:3306/galacticos_db?useSSL=true&serverTimezone=UTC
+spring.datasource.username=admin
+spring.datasource.password=TU_PASSWORD_BD_SUPER_SEGURO
+spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+
+## ========================
+## CONFIGURACIÓN JPA/HIBERNATE
+## ========================
+spring.jpa.database-platform=org.hibernate.dialect.MySQL8Dialect
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.format_sql=false
+
+## ========================
+## JWT CONFIGURATION
+## ========================
+# CAMBIAR EN PRODUCCIÓN - Mínimo 32 caracteres
+jwt.secret=TuSecretSuperSeguroQueDebeSerMasDeUnaTreintaCaracteresParaSerSeguro2024
+jwt.expiration=86400000
+jwt.refresh-expiration=604800000
+
+## ========================
+## FILE UPLOAD CONFIGURATION
+## ========================
+file.upload-dir=/opt/galacticos/uploads
+file.max-size=10MB
+spring.servlet.multipart.max-file-size=10MB
+spring.servlet.multipart.max-request-size=20MB
+
+## ========================
+## WOMPI PAYMENT GATEWAY - PRODUCCIÓN
+## ========================
+# Obtener credenciales en: https://dashboard.wompi.co/settings/api-keys
+wompi.public-key=pub_prod_TU_PUBLIC_KEY_AQUI
+wompi.private-key=prv_prod_TU_PRIVATE_KEY_AQUI
+wompi.events-secret=prod_events_TU_EVENTOS_SECRET_AQUI
+wompi.integrity-secret=prod_integrity_TU_INTEGRIDAD_SECRET_AQUI
+wompi.api-url=https://api.wompi.co/v1
+wompi.sandbox=false
+
+## ========================
+## TWILIO CONFIGURATION (WhatsApp)
+## ========================
+# Obtener en: https://console.twilio.com/
+twilio.account-sid=CAMBIAR_CON_TU_ACCOUNT_SID
+twilio.auth-token=CAMBIAR_CON_TU_AUTH_TOKEN
+twilio.phone-number=+57XXXXXXXXXXXXX
+
+## ========================
+## LOGGING CONFIGURATION
+## ========================
+logging.level.root=INFO
+logging.level.galacticos_app_back=INFO
+logging.level.org.springframework.web=WARN
+logging.level.org.hibernate.SQL=WARN
+logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
+
+## ========================
+## ACTUATOR CONFIGURATION
+## ========================
+management.endpoints.web.exposure.include=health,metrics
+management.endpoint.health.show-details=when-authorized
+
+## ========================
+## SESSION CONFIGURATION
+## ========================
+server.servlet.session.timeout=30m
+
+## ========================
+## CORS CONFIGURATION
+## ========================
+# Nota: CORS también está configurado en SecurityConfig.java
+# Esta es una configuración adicional si es necesaria
