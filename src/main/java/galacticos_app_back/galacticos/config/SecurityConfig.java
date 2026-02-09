@@ -102,7 +102,7 @@ public class SecurityConfig {
             "https://3-85-111-48.nip.io",
             "https://d2ga9msb3312dv.cloudfront.net",
             "http://d2ga9msb3312dv.cloudfront.net",
-            "http://galacticos-frontend.s3-website-us-east-1.amazonaws.com",
+            "http://galacticos-frontend.s3-website-us-east-1.amazonaws.com"
         ));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"));
         configuration.setAllowedHeaders(Arrays.asList("Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"));
