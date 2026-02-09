@@ -83,38 +83,38 @@ public class SecurityConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         CorsConfiguration config = new CorsConfiguration();
         
-        // Configuración MINIMALISTA para evitar duplicados
-        // ⚠️ SOLO UN ORIGEN - el de tu frontend en producción
-        config.setAllowedOrigins(Collections.singletonList(
-            "http://galacticos-frontend.s3-website-us-east-1.amazonaws.com"
+        config.setAllowedOrigins(Arrays.asList(
+            "http://localhost:4200",
+            "http://localhost:3000",
+            "http://localhost:8080",
+            "https://localhost:4200",
+            "https://localhost:3000",
+            "https://localhost:8080",
+            "http://3.85.111.48:8080",
+            "https://3.85.111.48:8080",
+            "http://3-85-111-48.nip.io",
+            "https://3-85-111-48.nip.io",
+            "https://d2ga9msb3312dv.cloudfront.net",
+            "http://d2ga9msb3312dv.cloudfront.net",
+            "http://galacticos-frontend.s3-website-us-east-1.amazonaws.com",
+            "https://galacticos-frontend.s3-website-us-east-1.amazonaws.com"
         ));
         
-        // Para desarrollo local, puedes usar:
-        // config.setAllowedOrigins(Arrays.asList(
-        //     "http://galacticos-frontend.s3-website-us-east-1.amazonaws.com",
-        //     "http://localhost:4200",
-        //     "http://localhost:3000"
-        // ));
-        
         config.setAllowedMethods(Arrays.asList(
-            "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
+            "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"
         ));
         
         config.setAllowedHeaders(Arrays.asList(
-            "Authorization", 
-            "Content-Type", 
-            "X-Requested-With",
-            "Accept"
+            "*"
         ));
         
         config.setExposedHeaders(Arrays.asList(
-            "Authorization"
+            "Authorization", "Content-Type", "X-Requested-With"
         ));
         
         config.setAllowCredentials(true);
-        config.setMaxAge(3600L); // 1 hora
+        config.setMaxAge(3600L);
         
-        // IMPORTANTE: Solo registrar en /** para evitar conflictos
         source.registerCorsConfiguration("/**", config);
         
         return new CorsFilter(source);
@@ -123,12 +123,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            // ⚠️ IMPORTANTE: NO usar .cors() aquí, ya que inyectamos el CorsFilter manualmente
             .csrf(csrf -> csrf.disable())
-            
-            // Agregar el CorsFilter MANUALMENTE como primer filtro
-            .addFilterBefore(corsFilter(), UsernamePasswordAuthenticationFilter.class)
-            
             .exceptionHandling(exception -> exception
                     .authenticationEntryPoint(unauthorizedHandler)
             )
@@ -136,13 +131,13 @@ public class SecurityConfig {
                     .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
             .authorizeHttpRequests(auth -> auth
-                    .requestMatchers(HttpMethod.OPTIONS).permitAll()
-                    .requestMatchers("OPTIONS", "/api/**").permitAll()
+                    .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                     .requestMatchers(PUBLIC_URLS).permitAll()
                     .anyRequest().authenticated()
             )
             .authenticationProvider(daoAuthenticationProvider())
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(corsFilter(), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(jwtAuthenticationFilter, org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
