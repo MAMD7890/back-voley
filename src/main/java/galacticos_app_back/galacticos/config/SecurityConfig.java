@@ -135,6 +135,7 @@ public class SecurityConfig {
                     .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
             .authorizeHttpRequests(auth -> auth
+                    .requestMatchers("OPTIONS", "/api/**").permitAll()
                     .requestMatchers(PUBLIC_URLS).permitAll()
                     .anyRequest().authenticated()
             )
