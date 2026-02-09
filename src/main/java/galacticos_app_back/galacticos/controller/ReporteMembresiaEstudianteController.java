@@ -10,7 +10,6 @@ import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/reportes/membresias")
-@CrossOrigin(origins = "*", maxAge = 3600)
 public class ReporteMembresiaEstudianteController {
 
     private final ReporteMembresiaEstudianteService service;

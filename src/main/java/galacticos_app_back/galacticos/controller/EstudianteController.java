@@ -36,7 +36,6 @@ import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/estudiantes")
-@CrossOrigin(origins = "*", maxAge = 3600)
 public class EstudianteController {
     
     @Autowired

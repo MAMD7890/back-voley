@@ -11,7 +11,7 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/recordatorios-pago")
-@CrossOrigin(origins = "*", maxAge = 3600)
+
 public class RecordatorioPagoController {
     
     @Autowired

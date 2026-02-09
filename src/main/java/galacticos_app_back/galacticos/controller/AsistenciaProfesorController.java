@@ -22,7 +22,6 @@ import galacticos_app_back.galacticos.service.AsistenciaProfesorService;
 
 @RestController
 @RequestMapping("/api/profesor/asistencia")
-@CrossOrigin(origins = "*", maxAge = 3600)
 public class AsistenciaProfesorController {
 
     private final AsistenciaProfesorService service;

@@ -13,7 +13,6 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/membresias")
-@CrossOrigin(origins = "*", maxAge = 3600)
 public class MembresiaController {
     
     @Autowired
