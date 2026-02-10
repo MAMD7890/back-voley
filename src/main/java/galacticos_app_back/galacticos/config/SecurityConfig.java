@@ -96,6 +96,8 @@ public class SecurityConfig {
             "https://3-85-111-48.nip.io",
             "https://d2ga9msb3312dv.cloudfront.net",
             "http://d2ga9msb3312dv.cloudfront.net",
+            "https://www.galacticosvoleysm.com",
+            "https://galacticosvoleysm.com",
             "http://galacticos-frontend.s3-website-us-east-1.amazonaws.com",
             "https://galacticos-frontend.s3-website-us-east-1.amazonaws.com"
         ));
