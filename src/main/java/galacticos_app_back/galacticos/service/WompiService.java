@@ -118,16 +118,12 @@ public class WompiService {
                         reference, request.getMesPagado());
                 
                 return WompiPaymentLinkResponse.builder()
+                        .success(true)
                         .id(data.get("id").asText())
-                        .name(data.has("name") ? data.get("name").asText() : null)
-                        .description(data.has("description") ? data.get("description").asText() : null)
+                        .paymentLinkUrl("https://checkout.wompi.co/l/" + data.get("id").asText())
+                        .reference(reference)
                         .amountInCents(amountInCents)
                         .currency(request.getCurrency() != null ? request.getCurrency() : "COP")
-                        .paymentLinkUrl("https://checkout.wompi.co/l/" + data.get("id").asText())
-                        .singleUse(request.getSingleUse())
-                        .active(true)
-                        .reference(reference)
-                        .success(true)
                         .message("Link de pago creado exitosamente")
                         .build();
             }

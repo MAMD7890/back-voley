@@ -11,16 +11,14 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class WompiPaymentLinkResponse {
     
-    private String id;
-    private String name;
-    private String description;
-    private Long amountInCents;
-    private String currency;
-    private String paymentLinkUrl;
-    private Boolean singleUse;
-    private Boolean active;
-    private Long expiresAt;
-    private String reference;
+    // Solo lo necesario para el cliente
     private boolean success;
-    private String message;
+    private String paymentLinkUrl;    // URL a la que el usuario debe ser redirigido
+    private String reference;         // Referencia única del pago
+    private String id;                // ID del link en Wompi
+    private String message;           // Mensaje de estado
+    
+    // Campos adicionales opcionales
+    private Long amountInCents;       // Para logging/verificación
+    private String currency;          // Para logging/verificación
 }
