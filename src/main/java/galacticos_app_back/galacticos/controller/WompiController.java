@@ -2,10 +2,12 @@ package galacticos_app_back.galacticos.controller;
 
 import galacticos_app_back.galacticos.config.WompiConfig;
 import galacticos_app_back.galacticos.dto.wompi.*;
+import galacticos_app_back.galacticos.dto.auth.MessageResponse;
 import galacticos_app_back.galacticos.service.WompiService;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -36,16 +38,35 @@ public class WompiController {
     
     /**
      * Genera la firma de integridad para el widget de Wompi
-     * Usado cuando se implementa el checkout directamente en el frontend
+     * Endpoint para validar integridad de transacciones en el widget
+     * 
+     * Request: POST /api/wompi/integrity-signature
+     * Body: {"amount": 80000, "reference": "PAY-1-2025-02-ABC123", "currency": "COP"}
+     * 
+     * Response: {"reference": "...", "amountInCents": 8000000, "integritySignature": "sha256...", "publicKey": "pub_prod_..."}
      */
     @PostMapping("/integrity-signature")
-    public ResponseEntity<WompiIntegritySignature> generateIntegritySignature(
-            @RequestParam BigDecimal amount,
-            @RequestParam String reference,
-            @RequestParam(defaultValue = "COP") String currency) {
-        
-        WompiIntegritySignature signature = wompiService.generateIntegritySignature(amount, reference, currency);
-        return ResponseEntity.ok(signature);
+    public ResponseEntity<?> generateIntegritySignature(
+            @RequestBody IntegritySignatureRequest request) {
+        try {
+            log.info("Generando firma de integridad para referencia: {}", request.getReference());
+            
+            String currency = request.getCurrency() != null ? request.getCurrency() : "COP";
+            
+            WompiIntegritySignature signature = wompiService.generateIntegritySignature(
+                    request.getAmount(),
+                    request.getReference(),
+                    currency
+            );
+            
+            log.info("✅ Firma de integridad generada correctamente - Reference: {}", request.getReference());
+            return ResponseEntity.ok(signature);
+            
+        } catch (Exception e) {
+            log.error("❌ Error generando firma de integridad: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(MessageResponse.error("Error generando firma: " + e.getMessage()));
+        }
     }
     
     /**

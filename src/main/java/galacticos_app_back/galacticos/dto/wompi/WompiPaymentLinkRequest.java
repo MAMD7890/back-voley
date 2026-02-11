@@ -20,9 +20,12 @@ public class WompiPaymentLinkRequest {
     private String description;
     private String customerEmail;
     private String customerName;
+    private String customerPhone; // Teléfono del cliente (REQUERIDO por Wompi)
     private String redirectUrl;
     private String mesPagado;
     private Boolean singleUse; // Si es un link de un solo uso
     private Long expiresAt; // Timestamp de expiración
     private Boolean collectShipping; // Si recolectar datos de envío
+    private String customerDocument;      // Nuevo: Número de documento
+private String customerDocumentType;  // Nuevo: Tipo de documento (CC, CE, TI, PP)
 }

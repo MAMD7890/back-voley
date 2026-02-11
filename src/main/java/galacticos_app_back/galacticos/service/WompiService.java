@@ -63,85 +63,102 @@ public class WompiService {
         return "PAY-" + idEstudiante + "-" + mesPagado + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
     }
     
-    /**
-     * Crea un link de pago en Wompi
-     */
-    public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest request) {
-        try {
-            String reference = generateReference(request.getIdEstudiante(), request.getMesPagado());
-            Long amountInCents = request.getAmount().multiply(BigDecimal.valueOf(100)).longValue();
+/**
+ * Crea un link de pago en Wompi
+ */
+public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest request) {
+    try {
+        String reference = generateReference(request.getIdEstudiante(), request.getMesPagado());
+        Long amountInCents = request.getAmount().multiply(BigDecimal.valueOf(100)).longValue();
+        
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(wompiConfig.getPrivateKey());
+        
+        Map<String, Object> body = new HashMap<>();
+        body.put("name", request.getName() != null ? request.getName() : "Pago Mensualidad");
+        body.put("description", request.getDescription() != null ? request.getDescription() : "Pago de mensualidad escuela de voleibol");
+        body.put("single_use", request.getSingleUse() != null ? request.getSingleUse() : true);
+        body.put("collect_shipping", request.getCollectShipping() != null ? request.getCollectShipping() : false);
+        body.put("currency", request.getCurrency() != null ? request.getCurrency() : "COP");
+        body.put("amount_in_cents", amountInCents);
+        
+        if (request.getRedirectUrl() != null) {
+            body.put("redirect_url", request.getRedirectUrl());
+        }
+        
+        if (request.getExpiresAt() != null) {
+            body.put("expires_at", request.getExpiresAt());
+        }
+        
+        // Agregar el ID del estudiante y mes como metadata
+        Map<String, String> customerData = new HashMap<>();
+        customerData.put("email", request.getCustomerEmail());
+        customerData.put("full_name", request.getCustomerName());
+        if (request.getCustomerPhone() != null) {
+            customerData.put("phone_number", request.getCustomerPhone());
+        }
+        // ✅ NUEVO: Agregar campos de documento requeridos por Wompi
+        if (request.getCustomerDocument() != null) {
+            customerData.put("legal_id", request.getCustomerDocument());
+        }
+        if (request.getCustomerDocumentType() != null) {
+            customerData.put("legal_id_type", request.getCustomerDocumentType());
+        }
+        body.put("customer_data", customerData);
+        
+        // Agregar referencia para tracking
+        body.put("sku", reference);
+        
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+        
+        ResponseEntity<String> response = restTemplate.exchange(
+                wompiConfig.getApiUrl() + "/payment_links",
+                HttpMethod.POST,
+                entity,
+                String.class
+        );
+        
+        if (response.getStatusCode().is2xxSuccessful()) {
+            JsonNode jsonResponse = objectMapper.readTree(response.getBody());
+            JsonNode data = jsonResponse.get("data");
             
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setBearerAuth(wompiConfig.getPrivateKey());
+            // ✅ NUEVO: Log detallado
+            log.info("===== RESPUESTA COMPLETA DE WOMPI (createPaymentLink) =====");
+            log.info("Body completo: {}", response.getBody());
+            log.info("Data node: {}", data);
+            log.info("Data fields - id: {}, active: {}, merchant_public_key: {}", 
+                data.get("id"), data.get("active"), data.get("merchant_public_key"));
+            log.info("=========================================================");
             
-            Map<String, Object> body = new HashMap<>();
-            body.put("name", request.getName() != null ? request.getName() : "Pago Mensualidad");
-            body.put("description", request.getDescription() != null ? request.getDescription() : "Pago de mensualidad escuela de voleibol");
-            body.put("single_use", request.getSingleUse() != null ? request.getSingleUse() : true);
-            body.put("collect_shipping", request.getCollectShipping() != null ? request.getCollectShipping() : false);
-            body.put("currency", request.getCurrency() != null ? request.getCurrency() : "COP");
-            body.put("amount_in_cents", amountInCents);
-            
-            if (request.getRedirectUrl() != null) {
-                body.put("redirect_url", request.getRedirectUrl());
-            }
-            
-            if (request.getExpiresAt() != null) {
-                body.put("expires_at", request.getExpiresAt());
-            }
-            
-            // Agregar el ID del estudiante y mes como metadata
-            Map<String, String> customerData = new HashMap<>();
-            customerData.put("email", request.getCustomerEmail());
-            customerData.put("full_name", request.getCustomerName());
-            body.put("customer_data", customerData);
-            
-            // Agregar referencia para tracking
-            body.put("sku", reference);
-            
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-            
-            ResponseEntity<String> response = restTemplate.exchange(
-                    wompiConfig.getApiUrl() + "/payment_links",
-                    HttpMethod.POST,
-                    entity,
-                    String.class
-            );
-            
-            if (response.getStatusCode().is2xxSuccessful()) {
-                JsonNode jsonResponse = objectMapper.readTree(response.getBody());
-                JsonNode data = jsonResponse.get("data");
-                
-                // Crear registro de pago pendiente
-                createPendingPayment(request.getIdEstudiante(), request.getAmount(), 
-                        reference, request.getMesPagado());
-                
-                return WompiPaymentLinkResponse.builder()
-                        .success(true)
-                        .id(data.get("id").asText())
-                        .paymentLinkUrl("https://checkout.wompi.co/l/" + data.get("id").asText())
-                        .reference(reference)
-                        .amountInCents(amountInCents)
-                        .currency(request.getCurrency() != null ? request.getCurrency() : "COP")
-                        .message("Link de pago creado exitosamente")
-                        .build();
-            }
+            // Crear registro de pago pendiente
+            createPendingPayment(request.getIdEstudiante(), request.getAmount(), 
+                    reference, request.getMesPagado());
             
             return WompiPaymentLinkResponse.builder()
-                    .success(false)
-                    .message("Error al crear el link de pago")
-                    .build();
-                    
-        } catch (Exception e) {
-            log.error("Error creando link de pago en Wompi: {}", e.getMessage(), e);
-            return WompiPaymentLinkResponse.builder()
-                    .success(false)
-                    .message("Error: " + e.getMessage())
+                    .success(true)
+                    .id(data.get("id").asText())
+                    .paymentLinkUrl("https://checkout.wompi.co/l/" + data.get("id").asText())
+                    .reference(reference)
+                    .amountInCents(amountInCents)
+                    .currency(request.getCurrency() != null ? request.getCurrency() : "COP")
+                    .message("Link de pago creado exitosamente")
                     .build();
         }
+        
+        return WompiPaymentLinkResponse.builder()
+                .success(false)
+                .message("Error al crear el link de pago")
+                .build();
+                
+    } catch (Exception e) {
+        log.error("Error creando link de pago en Wompi: {}", e.getMessage(), e);
+        return WompiPaymentLinkResponse.builder()
+                .success(false)
+                .message("Error: " + e.getMessage())
+                .build();
     }
-    
+}
     /**
      * Consulta el estado de una transacción
      */
@@ -162,6 +179,14 @@ public class WompiService {
             if (response.getStatusCode().is2xxSuccessful()) {
                 JsonNode jsonResponse = objectMapper.readTree(response.getBody());
                 JsonNode data = jsonResponse.get("data");
+                
+                // ✅ NUEVO: Log detallado
+                log.info("===== RESPUESTA COMPLETA DE WOMPI (getTransaction) =====");
+                log.info("Body completo: {}", response.getBody());
+                log.info("Data node: {}", data);
+                log.info("Data fields - id: {}, status: {}, reference: {}", 
+                    data.get("id"), data.get("status"), data.get("reference"));
+                log.info("========================================================");
                 
                 return WompiTransactionResponse.builder()
                         .transactionId(data.get("id").asText())
@@ -493,7 +518,15 @@ public class WompiService {
             
             if (response.getStatusCode().is2xxSuccessful()) {
                 JsonNode jsonResponse = objectMapper.readTree(response.getBody());
-                return jsonResponse.get("data");
+                JsonNode data = jsonResponse.get("data");
+                
+                // ✅ NUEVO: Log detallado
+                log.info("===== RESPUESTA COMPLETA DE WOMPI (getMerchantInfo) =====");
+                log.info("Body completo: {}", response.getBody());
+                log.info("Data node: {}", data);
+                log.info("=========================================================");
+                
+                return data;
             }
             
             return null;
