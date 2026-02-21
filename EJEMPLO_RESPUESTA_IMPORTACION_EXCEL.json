@@ -1,0 +1,53 @@
+{
+  "descipcion": "Respuesta exitosa de importación de estudiantes desde Excel",
+  "exitosos": 25,
+  "errores": 2,
+  "total": 27,
+  "resultados": [
+    {
+      "fila": 2,
+      "nombre": "Juan Pérez García",
+      "estado": "EXITOSO",
+      "mensaje": "Estudiante y usuario creados",
+      "idEstudiante": 123,
+      "email": "juan.perez@example.com",
+      "password": "1234567890"
+    },
+    {
+      "fila": 3,
+      "nombre": "María López Rodríguez",
+      "estado": "EXITOSO",
+      "mensaje": "Estudiante y usuario creados",
+      "idEstudiante": 124,
+      "email": "maria.lopez@example.com",
+      "password": "9876543210"
+    },
+    {
+      "fila": 4,
+      "nombre": "Carlos González",
+      "estado": "ERROR",
+      "mensaje": "El correo ya está registrado en el sistema"
+    },
+    {
+      "fila": 5,
+      "nombre": "Ana Martínez",
+      "estado": "ERROR",
+      "mensaje": "Error al procesar: El número de documento ya existe"
+    },
+    {
+      "fila": 6,
+      "nombre": "David Suárez",
+      "estado": "EXITOSO",
+      "mensaje": "Estudiante y usuario creados",
+      "idEstudiante": 125,
+      "email": "david.suarez@example.com",
+      "password": "1111111111"
+    }
+  ],
+  "resumen": {
+    "procesados": 27,
+    "creados": 25,
+    "fallidos": 2,
+    "tasaExito": "92.59%"
+  }
+}

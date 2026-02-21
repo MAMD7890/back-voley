@@ -269,9 +269,26 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     return true;
                     
                 } else if ("DECLINED".equals(status) || "VOIDED".equals(status) || "ERROR".equals(status)) {
+                    pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
+                    pago.setFechaPago(LocalDate.now());
+                    pago.setHoraPago(LocalTime.now());
                     pago.setWompiTransactionId(transactionId);
+                    if (reference != null) {
+                        pago.setReferenciaPago(reference);
+                    }
+                    
+                    // Actualizar estado del estudiante a EN_MORA
+                    if (pago.getEstudiante() != null) {
+                        Estudiante estudiante = pago.getEstudiante();
+                        if (estudiante.getEstadoPago() != Estudiante.EstadoPago.AL_DIA) {
+                            estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                            estudianteRepository.save(estudiante);
+                            log.info("❌ Estudiante {} marcado como EN_MORA por rechazo", estudiante.getIdEstudiante());
+                        }
+                    }
+                    
                     pagoRepository.save(pago);
-                    log.info("❌ Pago rechazado sincronizado - ID: {}", transactionId);
+                    log.info("❌ Pago rechazado sincronizado - ID: {}, Estado: {}", transactionId, status);
                     return true;
                 }
             }
@@ -366,8 +383,10 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         case "DECLINED":
                         case "VOIDED":
                         case "ERROR":
-                            pago.setEstadoPago(Pago.EstadoPago.PENDIENTE);
+                            pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
                             pago.setWompiTransactionId(transactionId);
+                            pago.setFechaPago(LocalDate.now());
+                            pago.setHoraPago(LocalTime.now());
                             
                             // Si el pago falla, el estudiante puede quedar en mora
                             if (pago.getEstudiante() != null) {
@@ -375,6 +394,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                                 if (estudiante.getEstadoPago() != Estudiante.EstadoPago.AL_DIA) {
                                     estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
                                     estudianteRepository.save(estudiante);
+                                    log.info("❌ Estudiante {} marcado como EN_MORA por rechazo de pago", 
+                                        estudiante.getIdEstudiante());
                                 }
                             }
                             
@@ -639,6 +660,62 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                             .success(true)
                             .message("Pago confirmado exitosamente");
                     
+                } else if ("DECLINED".equals(wompiResponse.getStatus()) || 
+                          "VOIDED".equals(wompiResponse.getStatus()) || 
+                          "ERROR".equals(wompiResponse.getStatus())) {
+                    
+                    // Manejar pagos rechazados
+                    if (pagoOpt.isPresent()) {
+                        Pago pago = pagoOpt.get();
+                        boolean pagoActualizado = false;
+                        boolean estudianteActualizado = false;
+                        
+                        if (pago.getEstadoPago() != Pago.EstadoPago.RECHAZADO) {
+                            pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
+                            pago.setFechaPago(LocalDate.now());
+                            pago.setHoraPago(LocalTime.now());
+                            pago.setWompiTransactionId(transactionId);
+                            if (wompiResponse.getReference() != null) {
+                                pago.setReferenciaPago(wompiResponse.getReference());
+                            }
+                            pagoRepository.save(pago);
+                            pagoActualizado = true;
+                            log.info("❌ Pago marcado como RECHAZADO - ID: {}", transactionId);
+                        }
+                        
+                        // Actualizar estudiante a EN_MORA
+                        if (pago.getEstudiante() != null) {
+                            Estudiante estudiante = pago.getEstudiante();
+                            if (estudiante.getEstadoPago() != Estudiante.EstadoPago.AL_DIA) {
+                                estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                                estudianteRepository.save(estudiante);
+                                estudianteActualizado = true;
+                                log.info("❌ Estudiante {} marcado como EN_MORA", estudiante.getIdEstudiante());
+                            }
+                            
+                            responseBuilder
+                                    .idEstudiante(estudiante.getIdEstudiante())
+                                    .nombreEstudiante(estudiante.getNombreCompleto())
+                                    .estadoEstudiante(estudiante.getEstadoPago().name())
+                                    .colorEstadoEstudiante(getColorEstadoPago(estudiante.getEstadoPago()));
+                        }
+                        
+                        responseBuilder
+                                .idPago(pago.getIdPago())
+                                .estadoPago(pago.getEstadoPago().name())
+                                .fechaPago(pago.getFechaPago())
+                                .horaPago(pago.getHoraPago())
+                                .mesPagado(pago.getMesPagado())
+                                .pagoActualizado(pagoActualizado)
+                                .estudianteActualizado(estudianteActualizado)
+                                .success(false)
+                                .message("Pago rechazado por Wompi. Estado: " + wompiResponse.getStatus());
+                    } else {
+                        responseBuilder
+                                .success(false)
+                                .message("Pago rechazado pero no encontrado en el sistema. Estado: " + wompiResponse.getStatus());
+                    }
+                    
                 } else if ("APPROVED".equals(wompiResponse.getStatus())) {
                     responseBuilder
                             .success(true)
@@ -647,7 +724,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 } else {
                     responseBuilder
                             .success(false)
-                            .message("El pago no está aprobado. Estado: " + wompiResponse.getStatus());
+                            .message("El pago tiene estado desconocido: " + wompiResponse.getStatus());
                 }
                 
             } else if (pagoOpt.isPresent()) {

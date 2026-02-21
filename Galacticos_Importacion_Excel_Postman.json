@@ -1,0 +1,158 @@
+{
+  "info": {
+    "_postman_id": "galacticos-importacion-excel",
+    "name": "Galácticos - Importación de Estudiantes Excel",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Importar Estudiantes desde Excel",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "estudiantes.xlsx",
+              "disabled": false
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:8080/api/estudiantes/importar-excel?sedeId=1",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "api",
+            "estudiantes",
+            "importar-excel"
+          ],
+          "query": [
+            {
+              "key": "sedeId",
+              "value": "1",
+              "disabled": false
+            }
+          ]
+        },
+        "description": "Importa masivamente estudiantes desde un archivo Excel\n\nPasos:\n1. Seleccionar archivo .xlsx\n2. Especificar sedeId (ID de la sede)\n3. Enviar petición\n\nRespuesta:\n- exitosos: Número de estudiantes creados exitosamente\n- errores: Número de estudiantes que fallaron\n- total: Total de registros procesados\n- resultados: Array con detalles de cada importación"
+      },
+      "response": [
+        {
+          "name": "Importación Exitosa",
+          "originalRequest": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "estudiantes.xlsx"
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/estudiantes/importar-excel?sedeId=1",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "8080",
+              "path": [
+                "api",
+                "estudiantes",
+                "importar-excel"
+              ],
+              "query": [
+                {
+                  "key": "sedeId",
+                  "value": "1"
+                }
+              ]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n  \"exitosos\": 25,\n  \"errores\": 2,\n  \"total\": 27,\n  \"resultados\": [\n    {\n      \"fila\": 2,\n      \"nombre\": \"Juan Pérez García\",\n      \"estado\": \"EXITOSO\",\n      \"mensaje\": \"Estudiante y usuario creados\",\n      \"idEstudiante\": 123,\n      \"email\": \"juan.perez@example.com\",\n      \"password\": \"1234567890\"\n    },\n    {\n      \"fila\": 3,\n      \"nombre\": \"María López\",\n      \"estado\": \"ERROR\",\n      \"mensaje\": \"El correo ya está registrado en el sistema\"\n    }\n  ]\n}"
+        }
+      ]
+    },
+    {
+      "name": "Obtener Todos los Estudiantes",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8080/api/estudiantes",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "api",
+            "estudiantes"
+          ]
+        },
+        "description": "Obtiene la lista completa de estudiantes registrados"
+      }
+    },
+    {
+      "name": "Obtener Estudiante por ID",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8080/api/estudiantes/123",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "api",
+            "estudiantes",
+            "123"
+          ]
+        },
+        "description": "Obtiene los detalles de un estudiante específico"
+      }
+    },
+    {
+      "name": "Obtener Estudiantes por Sede",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8080/api/estudiantes/sede/1",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8080",
+          "path": [
+            "api",
+            "estudiantes",
+            "sede",
+            "1"
+          ]
+        },
+        "description": "Obtiene todos los estudiantes de una sede específica"
+      }
+    }
+  ]
+}

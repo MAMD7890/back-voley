@@ -86,7 +86,7 @@ public class AuthController {
     }
 
     /**
-     * Registro de estudiante (asigna automáticamente el rol STUDENT)
+     * Registro de estudiante (asigna automáticamente el rol ESTUDIANTE)
      * Usa multipart/form-data
      */
     @PostMapping(value = "/register-student", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -127,7 +127,7 @@ public class AuthController {
             registerRequest.setFotoUrl(fileInfo.getFileUrl());
             registerRequest.setFotoNombre(fileInfo.getStoredFileName());
 
-            // Registrar con rol STUDENT automático
+            // Registrar con rol ESTUDIANTE automático
             AuthResponse response = authService.registerStudent(registerRequest);
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (RuntimeException e) {

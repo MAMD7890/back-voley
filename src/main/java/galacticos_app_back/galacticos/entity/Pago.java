@@ -52,6 +52,6 @@ public class Pago {
     }
     
     public enum EstadoPago {
-        PAGADO, PENDIENTE, VENCIDO
+        PAGADO, PENDIENTE, VENCIDO, RECHAZADO
     }
 }

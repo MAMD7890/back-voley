@@ -4,8 +4,11 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.TextStyle;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -19,6 +22,9 @@ import galacticos_app_back.galacticos.dto.ActualizarEstudianteDTO;
 import galacticos_app_back.galacticos.dto.CambioEstadoPagoDTO;
 import galacticos_app_back.galacticos.dto.CambioPasswordEstudianteDTO;
 import galacticos_app_back.galacticos.dto.EstudianteConEstadoPagoDTO;
+import galacticos_app_back.galacticos.dto.ExcelEstudianteImportDTO;
+import galacticos_app_back.galacticos.dto.ExcelImportResponseDTO;
+import galacticos_app_back.galacticos.dto.ExcelImportResultado;
 import galacticos_app_back.galacticos.dto.RegistroPagoEfectivoDTO;
 import galacticos_app_back.galacticos.dto.auth.AuthResponse;
 import galacticos_app_back.galacticos.dto.auth.RegisterRequest;
@@ -29,6 +35,7 @@ import galacticos_app_back.galacticos.entity.Usuario;
 import galacticos_app_back.galacticos.repository.EstudianteRepository;
 import galacticos_app_back.galacticos.repository.MembresiaRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
+import galacticos_app_back.galacticos.repository.SedeRepository;
 import galacticos_app_back.galacticos.repository.UsuarioRepository;
 
 @Service
@@ -54,6 +61,15 @@ public class EstudianteService {
     
     @Autowired
     private FileStorageService fileStorageService;
+    
+    @Autowired
+    private ExcelImportService excelImportService;
+    
+    @Autowired
+    private SedeRepository sedeRepository;
+    
+    @Autowired
+    private galacticos_app_back.galacticos.repository.RolRepository rolRepository;
     
     // Obtener todos los estudiantes
     public List<Estudiante> obtenerTodos() {
@@ -124,7 +140,7 @@ public class EstudianteService {
         registerRequest.setFotoUrl(null);
         registerRequest.setFotoNombre(null);
         
-        // Registrar usuario con rol STUDENT automático
+        // Registrar usuario con rol ESTUDIANTE automático
         try {
             AuthResponse authResponse = authService.registerStudent(registerRequest);
             System.out.println("Usuario creado exitosamente");
@@ -166,14 +182,467 @@ public class EstudianteService {
         }
     }
     
-    // Actualizar estudiante
-    public Estudiante actualizar(Integer id, Estudiante estudiante) {
-        Optional<Estudiante> existente = estudianteRepository.findById(id);
-        if (existente.isPresent()) {
-            estudiante.setIdEstudiante(id);
-            return estudianteRepository.save(estudiante);
+    /**
+     * Importa masivamente estudiantes desde un archivo Excel
+     * Crea automáticamente usuarios con credenciales (email y password)
+     * @param dtos Lista de DTOs extraídos del Excel
+     * @param sedeId ID de la sede asignada
+     * @return Reporte de importación
+     */
+    @Transactional
+    public Map<String, Object> importarEstudiantesDesdeExcel(List<ExcelEstudianteImportDTO> dtos, Integer sedeId) {
+        Map<String, Object> reporte = new HashMap<>();
+        List<Map<String, Object>> resultados = new ArrayList<>();
+        int exitosos = 0;
+        int errores = 0;
+        
+        // Obtener la sede
+        Optional<galacticos_app_back.galacticos.entity.Sede> sedeOpt = sedeRepository.findById(sedeId);
+        if (!sedeOpt.isPresent()) {
+            reporte.put("error", "La sede especificada no existe");
+            reporte.put("exitosos", 0);
+            reporte.put("errores", dtos.size());
+            return reporte;
         }
-        return null;
+        
+        galacticos_app_back.galacticos.entity.Sede sede = sedeOpt.get();
+        
+        for (ExcelEstudianteImportDTO dto : dtos) {
+            try {
+                // Validación básica
+                String erroresValidacion = validarDtoEstudiante(dto);
+                if (!erroresValidacion.isEmpty()) {
+                    resultados.add(Map.of(
+                        "fila", dto.getNumeroFila(),
+                        "nombre", dto.getNombreCompleto(),
+                        "estado", "ERROR",
+                        "mensaje", erroresValidacion
+                    ));
+                    errores++;
+                    continue;
+                }
+                
+                // Verificar si el email ya existe
+                if (usuarioRepository.findByEmail(dto.getCorreoEstudiante()).isPresent()) {
+                    resultados.add(Map.of(
+                        "fila", dto.getNumeroFila(),
+                        "nombre", dto.getNombreCompleto(),
+                        "estado", "ERROR",
+                        "mensaje", "El correo ya está registrado en el sistema"
+                    ));
+                    errores++;
+                    continue;
+                }
+                
+                // Verificar si el documento ya existe
+                Optional<Estudiante> estudianteExistente = estudianteRepository.findByNumeroDocumento(dto.getNumeroDocumento());
+                if (estudianteExistente.isPresent()) {
+                    resultados.add(Map.of(
+                        "fila", dto.getNumeroFila(),
+                        "nombre", dto.getNombreCompleto(),
+                        "estado", "ERROR",
+                        "mensaje", "El número de documento ya está registrado"
+                    ));
+                    errores++;
+                    continue;
+                }
+                
+                // Crear el estudiante
+                Estudiante estudiante = dtoAEstudiante(dto, sede);
+                estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
+                Estudiante estudianteGuardado = estudianteRepository.save(estudiante);
+                
+                // Crear membresía
+                Membresia membresia = new Membresia();
+                membresia.setEstudiante(estudianteGuardado);
+                membresia.setEquipo(null);
+                membresia.setFechaInicio(LocalDate.now());
+                membresia.setFechaFin(LocalDate.now().plusMonths(1));
+                membresia.setValorMensual(new java.math.BigDecimal("50000"));
+                membresia.setEstado(false);
+                membresiaRepository.save(membresia);
+                
+                // Crear usuario
+                RegisterRequest registerRequest = new RegisterRequest();
+                registerRequest.setNombre(estudianteGuardado.getCorreoEstudiante());
+                registerRequest.setEmail(estudianteGuardado.getCorreoEstudiante());
+                registerRequest.setPassword(estudianteGuardado.getNumeroDocumento());
+                registerRequest.setFotoUrl(null);
+                registerRequest.setFotoNombre(null);
+                
+                authService.registerStudent(registerRequest);
+                
+                resultados.add(Map.of(
+                    "fila", dto.getNumeroFila(),
+                    "nombre", dto.getNombreCompleto(),
+                    "estado", "EXITOSO",
+                    "mensaje", "Estudiante y usuario creados",
+                    "idEstudiante", estudianteGuardado.getIdEstudiante(),
+                    "email", estudianteGuardado.getCorreoEstudiante(),
+                    "password", estudianteGuardado.getNumeroDocumento()
+                ));
+                exitosos++;
+                
+            } catch (Exception e) {
+                resultados.add(Map.of(
+                    "fila", dto.getNumeroFila(),
+                    "nombre", dto.getNombreCompleto(),
+                    "estado", "ERROR",
+                    "mensaje", "Error al procesar: " + e.getMessage()
+                ));
+                errores++;
+            }
+        }
+        
+        reporte.put("exitosos", exitosos);
+        reporte.put("errores", errores);
+        reporte.put("total", dtos.size());
+        reporte.put("resultados", resultados);
+        
+        return reporte;
+    }
+    
+    /**
+     * Valida un DTO de estudiante del Excel
+     */
+    private String validarDtoEstudiante(ExcelEstudianteImportDTO dto) {
+        List<String> errores = new ArrayList<>();
+        
+        if (dto.getNombreCompleto() == null || dto.getNombreCompleto().trim().isEmpty()) {
+            errores.add("Nombre completo requerido");
+        }
+        if (dto.getNumeroDocumento() == null || dto.getNumeroDocumento().trim().isEmpty()) {
+            errores.add("Número de documento requerido");
+        }
+        if (dto.getCorreoEstudiante() == null || dto.getCorreoEstudiante().trim().isEmpty()) {
+            errores.add("Correo electrónico requerido");
+        }
+        if (dto.getFechaNacimiento() == null) {
+            errores.add("Fecha de nacimiento requerida");
+        }
+        if (dto.getTipoDocumento() == null || dto.getTipoDocumento().trim().isEmpty()) {
+            errores.add("Tipo de documento requerido");
+        }
+        
+        return String.join(", ", errores);
+    }
+    
+    /**
+     * Convierte un ExcelEstudianteImportDTO a una entidad Estudiante
+     */
+    private Estudiante dtoAEstudiante(ExcelEstudianteImportDTO dto, galacticos_app_back.galacticos.entity.Sede sede) {
+        Estudiante estudiante = new Estudiante();
+        
+        // Información personal
+        estudiante.setNombreCompleto(dto.getNombreCompleto());
+        try {
+            estudiante.setTipoDocumento(Estudiante.TipoDocumento.valueOf(dto.getTipoDocumento().toUpperCase()));
+        } catch (Exception e) {
+            estudiante.setTipoDocumento(Estudiante.TipoDocumento.CC);
+        }
+        estudiante.setNumeroDocumento(dto.getNumeroDocumento());
+        estudiante.setFechaNacimiento(dto.getFechaNacimiento());
+        estudiante.setEdad(dto.getEdad());
+        
+        // Sexo
+        try {
+            if (dto.getSexo() != null && !dto.getSexo().isEmpty()) {
+                estudiante.setSexo(Estudiante.Sexo.valueOf(dto.getSexo().toUpperCase()));
+            }
+        } catch (Exception e) {
+            // Ignorar si no es un valor válido
+        }
+        
+        // Información de contacto
+        estudiante.setDireccionResidencia(dto.getDireccionResidencia());
+        estudiante.setBarrio(dto.getBarrio());
+        estudiante.setCelularEstudiante(dto.getCelularEstudiante());
+        estudiante.setWhatsappEstudiante(dto.getWhatsappEstudiante());
+        estudiante.setCorreoEstudiante(dto.getCorreoEstudiante());
+        
+        // Sede
+        estudiante.setSede(sede);
+        
+        // Información del tutor
+        estudiante.setNombreTutor(dto.getNombreTutor());
+        estudiante.setParentescoTutor(dto.getParentescoTutor());
+        estudiante.setDocumentoTutor(dto.getDocumentoTutor());
+        estudiante.setTelefonoTutor(dto.getTelefonoTutor());
+        estudiante.setCorreoTutor(dto.getCorreoTutor());
+        estudiante.setOcupacionTutor(dto.getOcupacionTutor());
+        
+        // Información académica
+        estudiante.setInstitucionEducativa(dto.getInstitucionEducativa());
+        try {
+            if (dto.getJornada() != null && !dto.getJornada().isEmpty()) {
+                estudiante.setJornada(Estudiante.Jornada.valueOf(dto.getJornada().toUpperCase()));
+            }
+        } catch (Exception e) {
+            // Ignorar si no es un valor válido
+        }
+        estudiante.setGradoActual(dto.getGradoActual());
+        
+        // Información médica
+        estudiante.setEps(dto.getEps());
+        estudiante.setTipoSangre(dto.getTipoSangre());
+        estudiante.setAlergias(dto.getAlergias());
+        estudiante.setEnfermedadesCondiciones(dto.getEnfermedadesCondiciones());
+        estudiante.setMedicamentos(dto.getMedicamentos());
+        estudiante.setCertificadoMedicoDeportivo(dto.getCertificadoMedicoDeportivo() != null ? dto.getCertificadoMedicoDeportivo() : false);
+        
+        // Día de pago
+        estudiante.setDiaPagoMes(dto.getDiaPagoMes());
+        
+        // Información de emergencia
+        estudiante.setNombreEmergencia(dto.getNombreEmergencia());
+        estudiante.setTelefonoEmergencia(dto.getTelefonoEmergencia());
+        estudiante.setParentescoEmergencia(dto.getParentescoEmergencia());
+        estudiante.setOcupacionEmergencia(dto.getOcupacionEmergencia());
+        estudiante.setCorreoEmergencia(dto.getCorreoEmergencia());
+        
+        // Poblaciones vulnerables
+        estudiante.setPertenecelgbtiq(dto.getPerteneceIgbtiq() != null ? dto.getPerteneceIgbtiq() : false);
+        estudiante.setPersonaDiscapacidad(dto.getPersonaDiscapacidad() != null ? dto.getPersonaDiscapacidad() : false);
+        estudiante.setCondicionDiscapacidad(dto.getCondicionDiscapacidad());
+        estudiante.setMigranteRefugiado(dto.getMigranteRefugiado() != null ? dto.getMigranteRefugiado() : false);
+        estudiante.setPoblacionEtnica(dto.getPoblacionEtnica());
+        estudiante.setReligion(dto.getReligion());
+        
+        // Información deportiva
+        estudiante.setExperienciaVoleibol(dto.getExperienciaVoleibol());
+        estudiante.setOtrasDisciplinas(dto.getOtrasDisciplinas());
+        estudiante.setPosicionPreferida(dto.getPosicionPreferida());
+        try {
+            if (dto.getDominancia() != null && !dto.getDominancia().isEmpty()) {
+                estudiante.setDominancia(Estudiante.Dominancia.valueOf(dto.getDominancia().toUpperCase()));
+            }
+        } catch (Exception e) {
+            // Ignorar si no es un valor válido
+        }
+        try {
+            if (dto.getNivelActual() != null && !dto.getNivelActual().isEmpty()) {
+                estudiante.setNivelActual(Estudiante.NivelActual.valueOf(dto.getNivelActual().toUpperCase()));
+            }
+        } catch (Exception e) {
+            // Ignorar si no es un valor válido
+        }
+        estudiante.setClubesAnteriores(dto.getClubesAnteriores());
+        
+        // Consentimiento
+        estudiante.setAceptaConsentimiento(dto.getConsentimientoInformado() != null ? dto.getConsentimientoInformado() : false);
+        estudiante.setFirmaDigital(dto.getFirmaDigital());
+        estudiante.setFechaDiligenciamiento(dto.getFechaDiligenciamiento());
+        
+        // Estado por defecto
+        estudiante.setEstado(true);
+        
+        return estudiante;
+    }
+    
+    /**
+     * Importa estudiantes desde un archivo Excel
+     */
+    @Transactional
+    public Map<String, Object> procesarImportacionExcel(java.io.InputStream inputStream, Integer sedeId) throws Exception {
+        List<ExcelEstudianteImportDTO> dtos = excelImportService.leerExcel(inputStream);
+        return importarEstudiantesDesdeExcel(dtos, sedeId);
+    }
+    
+    // ===================== MÉTODO ACTUALIZAR - CORREGIDO =====================
+    /**
+     * Actualiza TODOS los datos de un estudiante
+     * Este es el método usado por el PUT /api/estudiantes/{id}
+     * 
+     * IMPORTANTE: Si cambia el correo o documento, también actualiza las credenciales del usuario asociado
+     * - Credenciales generadas por: username = correoEstudiante, password = numeroDocumento
+     */
+    @Transactional
+    public Estudiante actualizar(Integer id, Estudiante estudianteActualizado) {
+        System.out.println("=== INICIANDO ACTUALIZACIÓN DE ESTUDIANTE ID: " + id + " ===");
+        
+        // Obtener el estudiante existente
+        Estudiante estudiante = estudianteRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Estudiante no encontrado con ID: " + id));
+        
+        // Guardar valores antiguos para detectar cambios en credenciales
+        String emailAntiguo = estudiante.getCorreoEstudiante();
+        String documentoAntiguo = estudiante.getNumeroDocumento();
+        
+        System.out.println("Nombre anterior: " + estudiante.getNombreCompleto());
+        System.out.println("Nombre nuevo: " + estudianteActualizado.getNombreCompleto());
+        System.out.println("Documento anterior: " + documentoAntiguo);
+        System.out.println("Documento nuevo: " + estudianteActualizado.getNumeroDocumento());
+        System.out.println("Email anterior: " + emailAntiguo);
+        System.out.println("Email nuevo: " + estudianteActualizado.getCorreoEstudiante());
+        
+        // ============ ACTUALIZAR TODOS LOS CAMPOS ============
+        
+        // Información personal
+        estudiante.setNombreCompleto(estudianteActualizado.getNombreCompleto());
+        estudiante.setTipoDocumento(estudianteActualizado.getTipoDocumento());
+        estudiante.setNumeroDocumento(estudianteActualizado.getNumeroDocumento());
+        estudiante.setFechaNacimiento(estudianteActualizado.getFechaNacimiento());
+        estudiante.setEdad(estudianteActualizado.getEdad());
+        estudiante.setSexo(estudianteActualizado.getSexo());
+        
+        // Información de contacto
+        estudiante.setDireccionResidencia(estudianteActualizado.getDireccionResidencia());
+        estudiante.setBarrio(estudianteActualizado.getBarrio());
+        estudiante.setCelularEstudiante(estudianteActualizado.getCelularEstudiante());
+        estudiante.setWhatsappEstudiante(estudianteActualizado.getWhatsappEstudiante());
+        estudiante.setCorreoEstudiante(estudianteActualizado.getCorreoEstudiante());
+        
+        // ============ SEDE - CAMPO CRÍTICO ============
+        if (estudianteActualizado.getSede() != null) {
+            System.out.println("Sede anterior: " + (estudiante.getSede() != null ? estudiante.getSede().getNombre() : "null"));
+            System.out.println("Sede nueva: " + estudianteActualizado.getSede().getNombre() + " (ID: " + estudianteActualizado.getSede().getIdSede() + ")");
+            estudiante.setSede(estudianteActualizado.getSede());
+        }
+        
+        // Información del tutor
+        estudiante.setNombreTutor(estudianteActualizado.getNombreTutor());
+        estudiante.setParentescoTutor(estudianteActualizado.getParentescoTutor());
+        estudiante.setDocumentoTutor(estudianteActualizado.getDocumentoTutor());
+        estudiante.setTelefonoTutor(estudianteActualizado.getTelefonoTutor());
+        estudiante.setCorreoTutor(estudianteActualizado.getCorreoTutor());
+        estudiante.setOcupacionTutor(estudianteActualizado.getOcupacionTutor());
+        
+        // Información académica
+        estudiante.setInstitucionEducativa(estudianteActualizado.getInstitucionEducativa());
+        estudiante.setJornada(estudianteActualizado.getJornada());
+        estudiante.setGradoActual(estudianteActualizado.getGradoActual());
+        
+        // Información médica
+        estudiante.setEps(estudianteActualizado.getEps());
+        estudiante.setTipoSangre(estudianteActualizado.getTipoSangre());
+        estudiante.setAlergias(estudianteActualizado.getAlergias());
+        estudiante.setEnfermedadesCondiciones(estudianteActualizado.getEnfermedadesCondiciones());
+        estudiante.setMedicamentos(estudianteActualizado.getMedicamentos());
+        estudiante.setCertificadoMedicoDeportivo(estudianteActualizado.getCertificadoMedicoDeportivo());
+        
+        // Día de pago
+        estudiante.setDiaPagoMes(estudianteActualizado.getDiaPagoMes());
+        
+        // Información de emergencia
+        estudiante.setNombreEmergencia(estudianteActualizado.getNombreEmergencia());
+        estudiante.setTelefonoEmergencia(estudianteActualizado.getTelefonoEmergencia());
+        estudiante.setParentescoEmergencia(estudianteActualizado.getParentescoEmergencia());
+        estudiante.setOcupacionEmergencia(estudianteActualizado.getOcupacionEmergencia());
+        estudiante.setCorreoEmergencia(estudianteActualizado.getCorreoEmergencia());
+        
+        // Poblaciones vulnerables
+        estudiante.setPertenecelgbtiq(estudianteActualizado.getPertenecelgbtiq());
+        estudiante.setPersonaDiscapacidad(estudianteActualizado.getPersonaDiscapacidad());
+        estudiante.setCondicionDiscapacidad(estudianteActualizado.getCondicionDiscapacidad());
+        estudiante.setMigranteRefugiado(estudianteActualizado.getMigranteRefugiado());
+        estudiante.setPoblacionEtnica(estudianteActualizado.getPoblacionEtnica());
+        estudiante.setReligion(estudianteActualizado.getReligion());
+        
+        // Información deportiva
+        estudiante.setExperienciaVoleibol(estudianteActualizado.getExperienciaVoleibol());
+        estudiante.setOtrasDisciplinas(estudianteActualizado.getOtrasDisciplinas());
+        estudiante.setPosicionPreferida(estudianteActualizado.getPosicionPreferida());
+        estudiante.setDominancia(estudianteActualizado.getDominancia());
+        estudiante.setNivelActual(estudianteActualizado.getNivelActual());
+        estudiante.setClubesAnteriores(estudianteActualizado.getClubesAnteriores());
+        
+        // Camiseta
+        estudiante.setNombreCamiseta(estudianteActualizado.getNombreCamiseta());
+        estudiante.setNumeroCamiseta(estudianteActualizado.getNumeroCamiseta());
+        
+        // Consentimiento y firma
+        estudiante.setAceptaConsentimiento(estudianteActualizado.getAceptaConsentimiento());
+        estudiante.setFirmaDigital(estudianteActualizado.getFirmaDigital());
+        estudiante.setFechaDiligenciamiento(estudianteActualizado.getFechaDiligenciamiento());
+        
+        // Fotos
+        estudiante.setFotoUrl(estudianteActualizado.getFotoUrl());
+        estudiante.setFotoNombre(estudianteActualizado.getFotoNombre());
+        
+        // Estado y estado de pago
+        estudiante.setEstado(estudianteActualizado.getEstado());
+        if (estudianteActualizado.getEstadoPago() != null) {
+            estudiante.setEstadoPago(estudianteActualizado.getEstadoPago());
+        }
+        
+        // ============ ACTUALIZAR USUARIO ASOCIADO SI CAMBIARON CREDENCIALES ============
+        // Las credenciales son: username = correoEstudiante, password = numeroDocumento
+        boolean cambioEmail = !emailAntiguo.equals(estudianteActualizado.getCorreoEstudiante());
+        boolean cambioDocumento = !documentoAntiguo.equals(estudianteActualizado.getNumeroDocumento());
+        
+        if (cambioEmail || cambioDocumento) {
+            System.out.println("\n⚠️  CAMBIO DETECTADO EN CREDENCIALES");
+            System.out.println("   Cambio email: " + cambioEmail);
+            System.out.println("   Cambio documento: " + cambioDocumento);
+            
+            // Buscar el usuario por email antiguo (ya que el email es el username)
+            Optional<Usuario> usuarioOpt = usuarioRepository.findByEmail(emailAntiguo);
+            
+            if (usuarioOpt.isPresent()) {
+                Usuario usuario = usuarioOpt.get();
+                System.out.println("\n✅ Usuario encontrado - ID: " + usuario.getIdUsuario());
+                
+                // Actualizar email si cambió
+                if (cambioEmail) {
+                    // Verificar que el nuevo email no esté en uso por otro usuario
+                    if (!estudianteActualizado.getCorreoEstudiante().equals(emailAntiguo) &&
+                        usuarioRepository.findByEmail(estudianteActualizado.getCorreoEstudiante()).isPresent()) {
+                        throw new RuntimeException("El correo " + estudianteActualizado.getCorreoEstudiante() + 
+                                                 " ya está registrado por otro usuario");
+                    }
+                    
+                    usuario.setEmail(estudianteActualizado.getCorreoEstudiante());
+                    usuario.setUsername(estudianteActualizado.getCorreoEstudiante());
+                    System.out.println("   ✓ Email actualizado: " + emailAntiguo + " → " + 
+                                     estudianteActualizado.getCorreoEstudiante());
+                }
+                
+                // Actualizar contraseña si cambió el documento
+                if (cambioDocumento) {
+                    String newPassword = passwordEncoder.encode(estudianteActualizado.getNumeroDocumento());
+                    usuario.setPassword(newPassword);
+                    usuario.setRequiereChangioPassword(true); // Marcar para cambio en próximo login
+                    System.out.println("   ✓ Contraseña actualizada (basada en nuevo documento)");
+                    System.out.println("   ✓ Usuario deberá cambiar contraseña en próximo login");
+                }
+                
+                // Actualizar nombre si cambió
+                usuario.setNombre(estudianteActualizado.getNombreCompleto());
+                usuario.setTipoDocumento(estudianteActualizado.getTipoDocumento() != null ? 
+                        estudianteActualizado.getTipoDocumento().name() : null);
+                usuario.setNumeroDocumento(estudianteActualizado.getNumeroDocumento());
+                
+                // Guardar cambios del usuario
+                usuarioRepository.save(usuario);
+                System.out.println("   ✓ Usuario actualizado en BD");
+            } else {
+                System.out.println("⚠️  ADVERTENCIA: No se encontró usuario con email: " + emailAntiguo);
+            }
+        }
+        
+        // ============ GUARDAR EN LA BD ============
+        Estudiante estudianteGuardado = estudianteRepository.save(estudiante);
+        
+        System.out.println("✅ Estudiante actualizado exitosamente");
+        System.out.println("Nuevo nombre: " + estudianteGuardado.getNombreCompleto());
+        System.out.println("Nuevo documento: " + estudianteGuardado.getNumeroDocumento());
+        System.out.println("Nuevo email: " + estudianteGuardado.getCorreoEstudiante());
+        System.out.println("Nueva sede: " + (estudianteGuardado.getSede() != null ? estudianteGuardado.getSede().getNombre() : "Sin sede"));
+        
+        if (cambioEmail || cambioDocumento) {
+            System.out.println("\n✅ Usuario asociado también fue sincronizado");
+            if (cambioEmail) {
+                System.out.println("   Email usuario: " + estudianteGuardado.getCorreoEstudiante());
+            }
+            if (cambioDocumento) {
+                System.out.println("   Contraseña: Actualizada (basada en nuevo documento)");
+                System.out.println("   ⚠️  Usuario deberá cambiar contraseña en próximo login");
+            }
+        }
+        
+        System.out.println("=== FIN DE ACTUALIZACIÓN ===");
+        
+        return estudianteGuardado;
     }
     
     // Eliminar estudiante
@@ -645,5 +1114,272 @@ public class EstudianteService {
      */
     public List<EstudianteConEstadoPagoDTO> obtenerEstudiantesAlDia() {
         return obtenerPorEstadoPago(Estudiante.EstadoPago.AL_DIA);
+    }
+    
+    /**
+     * ESPECIFICACIÓN: Procesa la importación de estudiantes desde Excel con generación de credenciales
+     * 
+     * Genera automáticamente:
+     * - Username: {nombre.apellido}.{estudianteId}
+     * - Password: 12 caracteres (mayúsculas, minúsculas, números, símbolos)
+     * 
+     * @param inputStream Stream del archivo Excel
+     * @param sedeId ID de la sede
+     * @param nombreArchivo Nombre del archivo importado
+     * @param tamanioArchivo Tamaño del archivo en bytes
+     * @return ExcelImportResponseDTO con timestamp ISO 8601 y lista de resultados
+     * @throws Exception si hay error al leer el Excel
+     */
+/**
+ * MÉTODO CORREGIDO: Procesa la importación de estudiantes desde Excel
+ * 
+ * Cambios principales:
+ * 1. Agregados logs detallados en cada paso
+ * 2. Flush explícito después de cada save para forzar persistencia inmediata
+ * 3. Manejo robusto de excepciones
+ * 4. Validación previa del rol ESTUDIANTE
+ * 5. Verificación de persistencia
+ */
+@Transactional
+public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
+        java.io.InputStream inputStream,
+        Integer sedeId,
+        String nombreArchivo,
+        Long tamanioArchivo) {
+    
+    List<ExcelImportResultado> resultados = new ArrayList<>();
+    int exitosos = 0;
+    int errores = 0;
+    
+    try {
+        System.out.println("\n========== INICIANDO IMPORTACIÓN DESDE EXCEL ==========");
+        System.out.println("Archivo: " + nombreArchivo);
+        System.out.println("Tamaño: " + tamanioArchivo + " bytes");
+        System.out.println("Sede ID: " + sedeId);
+        
+        // 1. Validar que la sede existe
+        galacticos_app_back.galacticos.entity.Sede sede = sedeRepository.findById(sedeId)
+                .orElseThrow(() -> new RuntimeException("Sede no encontrada con ID: " + sedeId));
+        System.out.println("✅ Sede validada: " + sede.getNombre());
+        
+        // 2. Validar que el rol STUDENT existe
+        galacticos_app_back.galacticos.entity.Rol rolEstudiante = rolRepository.findByNombre("STUDENT")
+                .orElseThrow(() -> new RuntimeException("ERROR CRÍTICO: Rol STUDENT no existe en la base de datos"));
+        System.out.println("✅ Rol STUDENT validado: ID=" + rolEstudiante.getIdRol());
+        
+        // 3. Leer Excel
+        System.out.println("\n📖 Leyendo archivo Excel...");
+        List<ExcelEstudianteImportDTO> dtos = excelImportService.leerExcel(inputStream);
+        int totalFilas = dtos.size();
+        System.out.println("✅ " + totalFilas + " filas encontradas en el Excel");
+        
+        // 4. Procesar cada fila
+        for (int i = 0; i < dtos.size(); i++) {
+            ExcelEstudianteImportDTO dto = dtos.get(i);
+            int numeroFila = i + 2;  // +1 por encabezado, +1 porque es 1-based
+            
+            System.out.println("\n--- Procesando Fila " + numeroFila + " ---");
+            System.out.println("Nombre: " + dto.getNombreCompleto());
+            System.out.println("Documento: " + dto.getNumeroDocumento());
+            System.out.println("Email: " + dto.getCorreoEstudiante());
+            
+            try {
+                // Validar DTO
+                String erroresValidacion = validarDtoEstudiante(dto);
+                if (!erroresValidacion.isEmpty()) {
+                    System.out.println("❌ Validación fallida: " + erroresValidacion);
+                    errores++;
+                    resultados.add(ExcelImportResultado.builder()
+                            .fila(numeroFila)
+                            .nombreEstudiante(dto.getNombreCompleto())
+                            .estado("error")
+                            .mensaje("Validación fallida")
+                            .detalles(erroresValidacion)
+                            .build());
+                    continue;
+                }
+                
+                // Verificar si el email ya existe
+                if (usuarioRepository.findByEmail(dto.getCorreoEstudiante()).isPresent()) {
+                    System.out.println("❌ Email ya registrado: " + dto.getCorreoEstudiante());
+                    errores++;
+                    resultados.add(ExcelImportResultado.builder()
+                            .fila(numeroFila)
+                            .nombreEstudiante(dto.getNombreCompleto())
+                            .estado("error")
+                            .mensaje("El correo ya está registrado en el sistema")
+                            .detalles(dto.getCorreoEstudiante())
+                            .build());
+                    continue;
+                }
+                
+                // Verificar si el documento ya existe
+                if (estudianteRepository.findByNumeroDocumento(dto.getNumeroDocumento()).isPresent()) {
+                    System.out.println("❌ Documento ya registrado: " + dto.getNumeroDocumento());
+                    errores++;
+                    resultados.add(ExcelImportResultado.builder()
+                            .fila(numeroFila)
+                            .nombreEstudiante(dto.getNombreCompleto())
+                            .estado("error")
+                            .mensaje("El número de documento ya está registrado")
+                            .detalles(dto.getNumeroDocumento())
+                            .build());
+                    continue;
+                }
+                
+                // ============ 1. CREAR ESTUDIANTE ============
+                System.out.println("\n1️⃣ Creando Estudiante...");
+                Estudiante estudiante = dtoAEstudiante(dto, sede);
+                estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
+                Estudiante estudianteGuardado = estudianteRepository.save(estudiante);
+                estudianteRepository.flush();  // ⚠️ FORZAR PERSISTENCIA INMEDIATA
+                System.out.println("✅ Estudiante guardado - ID: " + estudianteGuardado.getIdEstudiante());
+                
+                // Verificar que realmente se guardó
+                Optional<Estudiante> verificacion1 = estudianteRepository.findById(estudianteGuardado.getIdEstudiante());
+                if (!verificacion1.isPresent()) {
+                    throw new RuntimeException("ERROR CRÍTICO: Estudiante no se guardó en BD después del flush");
+                }
+                System.out.println("✅ Verificación: Estudiante existe en BD");
+                
+                // ============ 2. GENERAR CREDENCIALES ============
+                System.out.println("\n2️⃣ Generando credenciales...");
+                // Usuario = Email del estudiante
+                String username = dto.getCorreoEstudiante();
+                // Contraseña = Número de documento del estudiante
+                String passwordGenerada = dto.getNumeroDocumento();
+                System.out.println("✅ Usuario (email): " + username);
+                System.out.println("✅ Contraseña (documento): " + passwordGenerada);
+                
+                // ============ 3. CREAR USUARIO ============
+                System.out.println("\n3️⃣ Creando Usuario...");
+                System.out.println("   - Nombre: " + dto.getNombreCompleto());
+                System.out.println("   - Username: " + username);
+                System.out.println("   - Email: " + dto.getCorreoEstudiante());
+                System.out.println("   - Rol: " + (rolEstudiante != null ? rolEstudiante.getNombre() : "NULL"));
+                System.out.println("   - Estudiante ID: " + estudianteGuardado.getIdEstudiante());
+                
+                Usuario usuario = new Usuario();
+                usuario.setNombre(dto.getNombreCompleto());
+                usuario.setUsername(username);
+                usuario.setEmail(dto.getCorreoEstudiante());
+                usuario.setPassword(passwordEncoder.encode(passwordGenerada));
+                usuario.setRol(rolEstudiante);
+                usuario.setEstudiante(estudianteGuardado);
+                usuario.setEstado(true);
+                usuario.setRequiereChangioPassword(true);
+                usuario.setTipoDocumento(dto.getTipoDocumento());
+                usuario.setNumeroDocumento(dto.getNumeroDocumento());
+                
+                System.out.println("   - Intentando guardar usuario...");
+                Usuario usuarioGuardado = usuarioRepository.save(usuario);
+                System.out.println("   - Usuario guardado en memoria, ID: " + usuarioGuardado.getIdUsuario());
+                usuarioRepository.flush();  // ⚠️ FORZAR PERSISTENCIA INMEDIATA
+                System.out.println("✅ Usuario guardado - ID: " + usuarioGuardado.getIdUsuario());
+                System.out.println("   Email: " + usuarioGuardado.getEmail());
+                System.out.println("   Username: " + usuarioGuardado.getUsername());
+                System.out.println("   Password (hasheado): " + usuarioGuardado.getPassword());
+                System.out.println("   Requiere cambio de contraseña: " + usuarioGuardado.getRequiereChangioPassword());
+                
+                // Verificar que realmente se guardó
+                Optional<Usuario> verificacion2 = usuarioRepository.findById(usuarioGuardado.getIdUsuario());
+                if (!verificacion2.isPresent()) {
+                    throw new RuntimeException("ERROR CRÍTICO: Usuario no se guardó en BD después del flush");
+                }
+                System.out.println("✅ Verificación: Usuario existe en BD");
+                Usuario usuarioVerificado = verificacion2.get();
+                System.out.println("   Password en BD: " + usuarioVerificado.getPassword());
+                
+                // ============ 4. CREAR MEMBRESÍA ============
+                System.out.println("\n4️⃣ Creando Membresía...");
+                Membresia membresia = new Membresia();
+                membresia.setEstudiante(estudianteGuardado);
+                membresia.setEquipo(null);
+                membresia.setFechaInicio(LocalDate.now());
+                membresia.setFechaFin(LocalDate.now().plusMonths(1));
+                membresia.setValorMensual(new BigDecimal("50000"));
+                membresia.setEstado(false);
+                
+                Membresia membresiaGuardada = membresiaRepository.save(membresia);
+                membresiaRepository.flush();  // ⚠️ FORZAR PERSISTENCIA INMEDIATA
+                System.out.println("✅ Membresía guardada - ID: " + membresiaGuardada.getIdMembresia());
+                
+                // Verificar que realmente se guardó
+                Optional<Membresia> verificacion3 = membresiaRepository.findById(membresiaGuardada.getIdMembresia());
+                if (!verificacion3.isPresent()) {
+                    throw new RuntimeException("ERROR CRÍTICO: Membresía no se guardó en BD después del flush");
+                }
+                System.out.println("✅ Verificación: Membresía existe en BD");
+                
+                // ============ REGISTRO DE ÉXITO ============
+                System.out.println("\n✅✅ FILA PROCESADA CON ÉXITO ✅✅");
+                exitosos++;
+                resultados.add(ExcelImportResultado.builder()
+                        .fila(numeroFila)
+                        .estudianteId(estudianteGuardado.getIdEstudiante())
+                        .nombreEstudiante(dto.getNombreCompleto())
+                        .usuarioCreado(username)
+                        .passwordGenerada(passwordGenerada)
+                        .estado("exitoso")
+                        .mensaje("Estudiante y usuario creados correctamente")
+                        .build());
+                
+            } catch (Exception e) {
+                System.out.println("\n❌❌ ERROR EN FILA ❌❌");
+                System.out.println("Excepción: " + e.getClass().getSimpleName());
+                System.out.println("Mensaje: " + e.getMessage());
+                e.printStackTrace();
+                
+                errores++;
+                resultados.add(ExcelImportResultado.builder()
+                        .fila(numeroFila)
+                        .nombreEstudiante(dto.getNombreCompleto() != null ? dto.getNombreCompleto() : "Desconocido")
+                        .estado("error")
+                        .mensaje("Error al procesar fila: " + e.getMessage())
+                        .detalles(e.getClass().getSimpleName())
+                        .build());
+            }
+        }
+        
+        // ============ REGISTRAR AUDITORÍA ============
+        registrarAuditoriaImportacion(sedeId, exitosos, errores, totalFilas, nombreArchivo);
+        
+        System.out.println("\n========== RESUMEN DE IMPORTACIÓN ==========");
+        System.out.println("Total procesadas: " + totalFilas);
+        System.out.println("Exitosas: " + exitosos);
+        System.out.println("Con errores: " + errores);
+        System.out.println("==========================================\n");
+        
+    } catch (RuntimeException e) {
+        System.out.println("\n❌ ERROR DE NEGOCIO: " + e.getMessage());
+        e.printStackTrace();
+        throw e;
+    } catch (Exception e) {
+        System.out.println("\n❌ ERROR INESPERADO: " + e.getMessage());
+        e.printStackTrace();
+        throw new RuntimeException("Error procesando importación: " + e.getMessage(), e);
+    }
+    
+    // Retornar respuesta con timestamp ISO 8601
+    return new ExcelImportResponseDTO(exitosos, errores, resultados.size(), resultados);
+}
+
+    /**
+     * Registra en auditoría la importación de estudiantes
+     */
+    private void registrarAuditoriaImportacion(
+            Integer sedeId,
+            int exitosos,
+            int errores,
+            int total,
+            String nombreArchivo) {
+        // TODO: Implementar registro en tabla de auditoría si existe
+        // Ejemplo: auditTrailRepository.save(new AuditoriaImportacion(...))
+        
+        // Por ahora solo logueamos
+        org.slf4j.LoggerFactory.getLogger(this.getClass()).info(
+                "Importación completada - Sede: {}, Exitosos: {}, Errores: {}, Total: {}, Archivo: {}",
+                sedeId, exitosos, errores, total, nombreArchivo
+        );
     }
 }

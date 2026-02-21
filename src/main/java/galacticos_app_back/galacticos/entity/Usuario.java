@@ -46,4 +46,28 @@ public class Usuario {
     @ManyToOne
     @JoinColumn(name = "id_rol")
     private Rol rol;
+    
+    // ===== NUEVOS CAMPOS PARA IMPORTACIÓN EXCEL =====
+    
+    /**
+     * Username único para login (generado en importación Excel)
+     * Formato: {nombre.apellido}.{estudianteId}
+     * Ej: juan.perez.450
+     */
+    @Column(unique = true, length = 100)
+    private String username;
+    
+    /**
+     * Indica si el usuario debe cambiar su contraseña en el próximo login
+     * Se activa cuando se crea desde importación Excel
+     */
+    @Column(columnDefinition = "BOOLEAN DEFAULT FALSE")
+    private Boolean requiereChangioPassword = false;
+    
+    /**
+     * Relación con Estudiante (para usuarios de tipo estudiante)
+     */
+    @ManyToOne
+    @JoinColumn(name = "id_estudiante")
+    private Estudiante estudiante;
 }

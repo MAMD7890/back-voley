@@ -8,6 +8,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +48,29 @@ public class AuthService {
     @Transactional
     public AuthResponse login(LoginRequest loginRequest) {
         try {
+            System.out.println("🔐 ===== INICIANDO LOGIN =====");
+            System.out.println("📧 Email ingresado: " + loginRequest.getEmail());
+            System.out.println("🔑 Password ingresado (longitud): " + (loginRequest.getPassword() != null ? loginRequest.getPassword().length() : "NULL"));
+            String pwd = loginRequest.getPassword();
+            System.out.println("🔑 Password ingresado (primeros 5 chars): " + (pwd != null && pwd.length() > 5 ? pwd.substring(0, 5) + "..." : "VERY_SHORT"));
+            
+            // Buscar usuario en BD
+            Usuario usuarioEnBD = usuarioRepository.findByEmail(loginRequest.getEmail()).orElse(null);
+            if (usuarioEnBD == null) {
+                System.out.println("❌ Usuario NO encontrado en BD con email: " + loginRequest.getEmail());
+                throw new RuntimeException("Usuario no encontrado");
+            }
+            
+            System.out.println("✅ Usuario encontrado en BD");
+            System.out.println("   - ID: " + usuarioEnBD.getIdUsuario());
+            System.out.println("   - Nombre: " + usuarioEnBD.getNombre());
+            System.out.println("   - Email: " + usuarioEnBD.getEmail());
+            System.out.println("   - Estado: " + usuarioEnBD.getEstado());
+            System.out.println("   - Password en BD (hasheado, primeros 20 chars): " + (usuarioEnBD.getPassword() != null ? usuarioEnBD.getPassword().substring(0, Math.min(20, usuarioEnBD.getPassword().length())) : "NULL"));
+            System.out.println("   - Rol: " + (usuarioEnBD.getRol() != null ? usuarioEnBD.getRol().getNombre() : "NULL"));
+            
+            // Intentar autenticación
+            System.out.println("🔄 Intentando autenticación con AuthenticationManager...");
             Authentication authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(
                             loginRequest.getEmail(),
@@ -54,18 +78,27 @@ public class AuthService {
                     )
             );
 
+            System.out.println("✅ Autenticación exitosa!");
             SecurityContextHolder.getContext().setAuthentication(authentication);
-
-            Usuario usuario = usuarioRepository.findByEmail(loginRequest.getEmail())
-                    .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
 
             String accessToken = jwtTokenProvider.generateToken(loginRequest.getEmail());
             String refreshToken = jwtTokenProvider.generateRefreshToken(loginRequest.getEmail());
 
-            return buildAuthResponse(usuario, accessToken, refreshToken);
+            System.out.println("✅ Tokens generados exitosamente");
+            return buildAuthResponse(usuarioEnBD, accessToken, refreshToken);
             
         } catch (BadCredentialsException e) {
+            System.out.println("❌ BadCredentialsException: " + e.getMessage());
+            e.printStackTrace();
             throw new RuntimeException("Credenciales inválidas");
+        } catch (UsernameNotFoundException e) {
+            System.out.println("❌ UsernameNotFoundException: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Usuario no encontrado: " + e.getMessage());
+        } catch (Exception e) {
+            System.out.println("❌ Exception inesperada: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Error en autenticación: " + e.getMessage());
         }
     }
 
