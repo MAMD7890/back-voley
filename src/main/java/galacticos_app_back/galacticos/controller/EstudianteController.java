@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -443,6 +444,7 @@ public class EstudianteController {
      * 4. Registra auditoría de importación
      * 5. Retorna reporte detallado
      */
+    @Transactional
     @PostMapping("/importar-excel")
     public ResponseEntity<?> importarExcel(
             @RequestParam("file") MultipartFile file,

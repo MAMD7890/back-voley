@@ -18,6 +18,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import jakarta.persistence.EntityManager;
+
 import galacticos_app_back.galacticos.dto.ActualizarEstudianteDTO;
 import galacticos_app_back.galacticos.dto.CambioEstadoPagoDTO;
 import galacticos_app_back.galacticos.dto.CambioPasswordEstudianteDTO;
@@ -43,6 +45,9 @@ public class EstudianteService {
     
     @Autowired
     private EstudianteRepository estudianteRepository;
+    
+    @Autowired
+    private EntityManager entityManager;
     
     @Autowired
     private AuthService authService;
@@ -308,23 +313,171 @@ public class EstudianteService {
     private String validarDtoEstudiante(ExcelEstudianteImportDTO dto) {
         List<String> errores = new ArrayList<>();
         
+        // Nombre completo
         if (dto.getNombreCompleto() == null || dto.getNombreCompleto().trim().isEmpty()) {
             errores.add("Nombre completo requerido");
         }
+        
+        // Número de documento
         if (dto.getNumeroDocumento() == null || dto.getNumeroDocumento().trim().isEmpty()) {
             errores.add("Número de documento requerido");
         }
+        
+        // Email - VALIDACIÓN MEJORADA
+        // Ahora permitimos "Notiene" porque se genera un email automático
         if (dto.getCorreoEstudiante() == null || dto.getCorreoEstudiante().trim().isEmpty()) {
             errores.add("Correo electrónico requerido");
         }
+        
+        // Fecha de nacimiento
         if (dto.getFechaNacimiento() == null) {
             errores.add("Fecha de nacimiento requerida");
         }
+        
+        // Edad - VALIDACIÓN MEJORADA
+        if (dto.getEdad() == null || dto.getEdad() <= 0 || dto.getEdad() > 100) {
+            errores.add("Edad debe estar entre 1 y 100");
+        }
+        
+        // Tipo de documento
         if (dto.getTipoDocumento() == null || dto.getTipoDocumento().trim().isEmpty()) {
             errores.add("Tipo de documento requerido");
         }
         
         return String.join(", ", errores);
+    }
+    
+    /**
+     * Sanitiza email: convierte valores especiales a null
+     */
+    private String sanitizarEmail(String email) {
+        if (email == null || email.trim().isEmpty()) {
+            return null;
+        }
+        String emailLimpio = email.trim().toLowerCase();
+        // Rechazar valores especiales comunes
+        if (emailLimpio.equals("notiene") || 
+            emailLimpio.equals("no tiene") || 
+            emailLimpio.equals("n/a") ||
+            emailLimpio.equals("na") ||
+            emailLimpio.equals("sin correo") ||
+            emailLimpio.equals("sin email")) {
+            return null;
+        }
+        return email.trim();
+    }
+    
+    /**
+     * Sanitiza edad
+     */
+    private Integer sanitizarEdad(Integer edad) {
+        if (edad == null || edad <= 0 || edad > 120) {
+            return 18;  // Edad por defecto si es inválida
+        }
+        return edad;
+    }
+    
+    /**
+     * Sanitiza texto limitando longitud máxima
+     */
+    private String sanitizarTexto(String texto, int maxLen) {
+        if (texto == null) {
+            return null;
+        }
+        String limpio = texto.trim();
+        if (limpio.length() > maxLen) {
+            limpio = limpio.substring(0, maxLen);
+        }
+        return limpio.isEmpty() ? null : limpio;
+    }
+    
+    /**
+     * Sanitiza número de documento removiendo comas, espacios y caracteres especiales
+     */
+    private String sanitizarNumeroDocumento(String documento) {
+        if (documento == null) return null;
+        // Remover comas, espacios, puntos, guiones
+        String limpio = documento.replaceAll("[,. -]", "").trim();
+        // Solo mantener dígitos
+        limpio = limpio.replaceAll("[^0-9]", "");
+        return limpio.isEmpty() ? null : limpio;
+    }
+    
+    /**
+     * Sanitiza teléfono removiendo espacios, comas y caracteres especiales
+     */
+    private String sanitizarTelefono(String telefono, int maxLen) {
+        if (telefono == null) return null;
+        // Remover espacios, comas, guiones, paréntesis, + pero mantener dígitos
+        String limpio = telefono.replaceAll("[\\s,()\\-+]", "").trim();
+        limpio = limpio.replaceAll("[^0-9]", "");
+        if (limpio.isEmpty()) return null;
+        if (limpio.length() > maxLen) {
+            limpio = limpio.substring(0, maxLen);
+        }
+        return limpio;
+    }
+    
+    /**
+     * Convierte valores literales como "No aplica", "NA" a boolean válido.
+     * Retorna null si el valor indica "no aplica", false si el valor es negación, true si es afirmación
+     */
+    private Boolean sanitizarBooleano(String valor) {
+        if (valor == null) return false;
+        String limpio = valor.trim().toLowerCase();
+        
+        // Valores que indican "no aplica" o son equivalentes a nulo
+        if (limpio.contains("no aplica") || limpio.equals("na") || limpio.equals("n a") || 
+            limpio.equals("")) {
+            return false;
+        }
+        
+        // Valores positivos
+        if (limpio.equals("sí") || limpio.equals("si") || limpio.equals("yes") || 
+            limpio.equals("s") || limpio.equals("y") || limpio.equals("1") ||
+            limpio.equals("true") || limpio.equals("verdadero")) {
+            return true;
+        }
+        
+        // Cualquier otro valor se considera false
+        return false;
+    }
+    
+    /**
+     * Mejora sanitización de email extrayendo de formatos raros como "nombre <email@domain.com>"
+     */
+    private String sanitizarEmailAvanzado(String email) {
+        if (email == null) return null;
+        
+        String limpio = email.trim();
+        
+        // Si contiene <email> extrae el email
+        if (limpio.contains("<") && limpio.contains(">")) {
+            int start = limpio.indexOf("<") + 1;
+            int end = limpio.indexOf(">");
+            if (start < end) {
+                limpio = limpio.substring(start, end).trim();
+            }
+        }
+        
+        // Si contiene @ 
+        if (limpio.contains("@")) {
+            // Validar formato básico
+            if (limpio.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+                return limpio;
+            } else {
+                // Email malformado, retornar null para generar automático
+                return null;
+            }
+        }
+        
+        // Si no tiene @ y dice "no tiene" o similar
+        if (limpio.toLowerCase().contains("no") || limpio.toLowerCase().contains("notiene") ||
+            limpio.toLowerCase().contains("n/a") || limpio.isEmpty()) {
+            return null;
+        }
+        
+        return null;
     }
     
     /**
@@ -340,9 +493,11 @@ public class EstudianteService {
         } catch (Exception e) {
             estudiante.setTipoDocumento(Estudiante.TipoDocumento.CC);
         }
-        estudiante.setNumeroDocumento(dto.getNumeroDocumento());
+        // Sanitizar documento (remover comas, espacios, etc.)
+        estudiante.setNumeroDocumento(sanitizarNumeroDocumento(dto.getNumeroDocumento()));
         estudiante.setFechaNacimiento(dto.getFechaNacimiento());
-        estudiante.setEdad(dto.getEdad());
+        // Sanitizar edad
+        estudiante.setEdad(sanitizarEdad(dto.getEdad()));
         
         // Sexo
         try {
@@ -354,25 +509,40 @@ public class EstudianteService {
         }
         
         // Información de contacto
-        estudiante.setDireccionResidencia(dto.getDireccionResidencia());
-        estudiante.setBarrio(dto.getBarrio());
-        estudiante.setCelularEstudiante(dto.getCelularEstudiante());
-        estudiante.setWhatsappEstudiante(dto.getWhatsappEstudiante());
-        estudiante.setCorreoEstudiante(dto.getCorreoEstudiante());
+        estudiante.setDireccionResidencia(sanitizarTexto(dto.getDireccionResidencia(), 200));
+        estudiante.setBarrio(sanitizarTexto(dto.getBarrio(), 100));
+        // Sanitizar teléfonos removiendo espacios, comas, etc.
+        estudiante.setCelularEstudiante(sanitizarTelefono(dto.getCelularEstudiante(), 20));
+        estudiante.setWhatsappEstudiante(sanitizarTelefono(dto.getWhatsappEstudiante(), 20));
+        // Sanitizar email de forma avanzada (extraer de formatos raros)
+        String emailLimpio = sanitizarEmailAvanzado(dto.getCorreoEstudiante());
+        if (emailLimpio == null || emailLimpio.isEmpty()) {
+            // Si aún no tiene email válido, generar automático
+            String numDocLimpio = sanitizarNumeroDocumento(dto.getNumeroDocumento());
+            emailLimpio = "usuario_" + numDocLimpio + "@galacticos.local";
+        }
+        estudiante.setCorreoEstudiante(sanitizarTexto(emailLimpio, 100));
         
         // Sede
         estudiante.setSede(sede);
         
         // Información del tutor
-        estudiante.setNombreTutor(dto.getNombreTutor());
-        estudiante.setParentescoTutor(dto.getParentescoTutor());
-        estudiante.setDocumentoTutor(dto.getDocumentoTutor());
-        estudiante.setTelefonoTutor(dto.getTelefonoTutor());
-        estudiante.setCorreoTutor(dto.getCorreoTutor());
-        estudiante.setOcupacionTutor(dto.getOcupacionTutor());
+        estudiante.setNombreTutor(sanitizarTexto(dto.getNombreTutor(), 200));
+        estudiante.setParentescoTutor(sanitizarTexto(dto.getParentescoTutor(), 50));
+        // Sanitizar documento tutor
+        estudiante.setDocumentoTutor(sanitizarNumeroDocumento(dto.getDocumentoTutor()));
+        // Sanitizar teléfono tutor
+        estudiante.setTelefonoTutor(sanitizarTelefono(dto.getTelefonoTutor(), 20));
+        // Sanitizar email tutor
+        String emailTutorLimpio = sanitizarEmailAvanzado(dto.getCorreoTutor());
+        if (emailTutorLimpio == null || emailTutorLimpio.isEmpty()) {
+            emailTutorLimpio = dto.getCorreoTutor();
+        }
+        estudiante.setCorreoTutor(sanitizarTexto(emailTutorLimpio, 100));
+        estudiante.setOcupacionTutor(sanitizarTexto(dto.getOcupacionTutor(), 100));
         
         // Información académica
-        estudiante.setInstitucionEducativa(dto.getInstitucionEducativa());
+        estudiante.setInstitucionEducativa(sanitizarTexto(dto.getInstitucionEducativa(), 150));
         try {
             if (dto.getJornada() != null && !dto.getJornada().isEmpty()) {
                 estudiante.setJornada(Estudiante.Jornada.valueOf(dto.getJornada().toUpperCase()));
@@ -383,8 +553,16 @@ public class EstudianteService {
         estudiante.setGradoActual(dto.getGradoActual());
         
         // Información médica
-        estudiante.setEps(dto.getEps());
-        estudiante.setTipoSangre(dto.getTipoSangre());
+        estudiante.setEps(sanitizarTexto(dto.getEps(), 100));
+        // Sanitizar tipoSangre: truncar a 20 caracteres máximo y limpiar
+        String tipoSangreRaw = dto.getTipoSangre();
+        if (tipoSangreRaw != null && !tipoSangreRaw.isEmpty()) {
+            // Truncar a 20 caracteres y hacer trim
+            String tipoSangreLimpio = tipoSangreRaw.trim().length() > 20 
+                ? tipoSangreRaw.trim().substring(0, 20) 
+                : tipoSangreRaw.trim();
+            estudiante.setTipoSangre(tipoSangreLimpio);
+        }
         estudiante.setAlergias(dto.getAlergias());
         estudiante.setEnfermedadesCondiciones(dto.getEnfermedadesCondiciones());
         estudiante.setMedicamentos(dto.getMedicamentos());
@@ -394,24 +572,30 @@ public class EstudianteService {
         estudiante.setDiaPagoMes(dto.getDiaPagoMes());
         
         // Información de emergencia
-        estudiante.setNombreEmergencia(dto.getNombreEmergencia());
-        estudiante.setTelefonoEmergencia(dto.getTelefonoEmergencia());
-        estudiante.setParentescoEmergencia(dto.getParentescoEmergencia());
-        estudiante.setOcupacionEmergencia(dto.getOcupacionEmergencia());
-        estudiante.setCorreoEmergencia(dto.getCorreoEmergencia());
+        estudiante.setNombreEmergencia(sanitizarTexto(dto.getNombreEmergencia(), 200));
+        // Sanitizar teléfono emergencia
+        estudiante.setTelefonoEmergencia(sanitizarTelefono(dto.getTelefonoEmergencia(), 20));
+        estudiante.setParentescoEmergencia(sanitizarTexto(dto.getParentescoEmergencia(), 50));
+        estudiante.setOcupacionEmergencia(sanitizarTexto(dto.getOcupacionEmergencia(), 100));
+        // Sanitizar email emergencia
+        String emailEmergenciaLimpio = sanitizarEmailAvanzado(dto.getCorreoEmergencia());
+        if (emailEmergenciaLimpio == null || emailEmergenciaLimpio.isEmpty()) {
+            emailEmergenciaLimpio = dto.getCorreoEmergencia();
+        }
+        estudiante.setCorreoEmergencia(sanitizarTexto(emailEmergenciaLimpio, 100));
         
         // Poblaciones vulnerables
         estudiante.setPertenecelgbtiq(dto.getPerteneceIgbtiq() != null ? dto.getPerteneceIgbtiq() : false);
         estudiante.setPersonaDiscapacidad(dto.getPersonaDiscapacidad() != null ? dto.getPersonaDiscapacidad() : false);
         estudiante.setCondicionDiscapacidad(dto.getCondicionDiscapacidad());
         estudiante.setMigranteRefugiado(dto.getMigranteRefugiado() != null ? dto.getMigranteRefugiado() : false);
-        estudiante.setPoblacionEtnica(dto.getPoblacionEtnica());
-        estudiante.setReligion(dto.getReligion());
+        estudiante.setPoblacionEtnica(sanitizarTexto(dto.getPoblacionEtnica(), 100));
+        estudiante.setReligion(sanitizarTexto(dto.getReligion(), 100));
         
         // Información deportiva
         estudiante.setExperienciaVoleibol(dto.getExperienciaVoleibol());
         estudiante.setOtrasDisciplinas(dto.getOtrasDisciplinas());
-        estudiante.setPosicionPreferida(dto.getPosicionPreferida());
+        estudiante.setPosicionPreferida(sanitizarTexto(dto.getPosicionPreferida(), 50));
         try {
             if (dto.getDominancia() != null && !dto.getDominancia().isEmpty()) {
                 estudiante.setDominancia(Estudiante.Dominancia.valueOf(dto.getDominancia().toUpperCase()));
@@ -1173,60 +1357,92 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
         int totalFilas = dtos.size();
         System.out.println("✅ " + totalFilas + " filas encontradas en el Excel");
         
-        // 4. Procesar cada fila
+        // 4. Procesar cada fila EN SU PROPIA TRANSACCIÓN
         for (int i = 0; i < dtos.size(); i++) {
             ExcelEstudianteImportDTO dto = dtos.get(i);
-            int numeroFila = i + 2;  // +1 por encabezado, +1 porque es 1-based
-            
-            System.out.println("\n--- Procesando Fila " + numeroFila + " ---");
-            System.out.println("Nombre: " + dto.getNombreCompleto());
-            System.out.println("Documento: " + dto.getNumeroDocumento());
-            System.out.println("Email: " + dto.getCorreoEstudiante());
+            int numeroFila = i + 2;
             
             try {
-                // Validar DTO
-                String erroresValidacion = validarDtoEstudiante(dto);
-                if (!erroresValidacion.isEmpty()) {
-                    System.out.println("❌ Validación fallida: " + erroresValidacion);
+                ExcelImportResultado resultado = procesarFilaExcelEnTransaccionIndependiente(
+                        dto, sedeId, numeroFila, rolEstudiante);
+                resultados.add(resultado);
+                if ("exitoso".equals(resultado.getEstado())) {
+                    exitosos++;
+                } else {
                     errores++;
-                    resultados.add(ExcelImportResultado.builder()
-                            .fila(numeroFila)
-                            .nombreEstudiante(dto.getNombreCompleto())
-                            .estado("error")
-                            .mensaje("Validación fallida")
-                            .detalles(erroresValidacion)
-                            .build());
-                    continue;
+                }
+            } catch (Exception e) {
+                System.out.println("\n❌ EXCEPCIÓN EN FILA " + numeroFila + ": " + e.getMessage());
+                errores++;
+                resultados.add(ExcelImportResultado.builder()
+                        .fila(numeroFila)
+                        .nombreEstudiante(dto.getNombreCompleto() != null ? dto.getNombreCompleto() : "Desconocido")
+                        .estado("error")
+                        .mensaje("Error al procesar fila: " + e.getMessage())
+                        .detalles(e.getClass().getSimpleName())
+                        .build());
+            }
+        }
+        
+        // ============ REGISTRAR AUDITORÍA ============
+        registrarAuditoriaImportacion(sedeId, exitosos, errores, totalFilas, nombreArchivo);
+        
+        System.out.println("\n========== RESUMEN DE IMPORTACIÓN ==========");
+        System.out.println("Total procesadas: " + totalFilas);
+        System.out.println("Exitosas: " + exitosos);
+        System.out.println("Con errores: " + errores);
+        System.out.println("==========================================\n");
+        
+    } catch (RuntimeException e) {
+        System.out.println("\n❌ ERROR DE NEGOCIO: " + e.getMessage());
+        e.printStackTrace();
+        throw e;
+    } catch (Exception e) {
+        System.out.println("\n❌ ERROR INESPERADO: " + e.getMessage());
+        e.printStackTrace();
+        throw new RuntimeException("Error procesando importación: " + e.getMessage(), e);
+    }
+    
+    // Retornar respuesta con timestamp ISO 8601
+    return new ExcelImportResponseDTO(exitosos, errores, resultados.size(), resultados);
+}
+
+    /**
+     * Procesa una fila individual en su PROPIA TRANSACCIÓN independiente.
+                try {
+                    if (estudianteRepository.findByNumeroDocumento(dto.getNumeroDocumento()).isPresent()) {
+                        System.out.println("❌ Documento ya registrado: " + dto.getNumeroDocumento());
+                        errores++;
+                        resultados.add(ExcelImportResultado.builder()
+                                .fila(numeroFila)
+                                .nombreEstudiante(dto.getNombreCompleto())
+                                .estado("error")
+                                .mensaje("El número de documento ya está registrado")
+                                .detalles(dto.getNumeroDocumento())
+                                .build());
+                        continue;
+                    }
+                } catch (Exception queryDocError) {
+                    System.out.println("⚠️ Error verificando documento, limpiando sesión...");
+                    entityManager.clear();  // 🔧 LIMPIAR SESIÓN SUCIA
+                    // Reintentar una sola vez
+                    if (estudianteRepository.findByNumeroDocumento(dto.getNumeroDocumento()).isPresent()) {
+                        System.out.println("❌ Documento ya registrado: " + dto.getNumeroDocumento());
+                        errores++;
+                        resultados.add(ExcelImportResultado.builder()
+                                .fila(numeroFila)
+                                .nombreEstudiante(dto.getNombreCompleto())
+                                .estado("error")
+                                .mensaje("El número de documento ya está registrado")
+                                .detalles(dto.getNumeroDocumento())
+                                .build());
+                        continue;
+                    }
                 }
                 
-                // Verificar si el email ya existe
-                if (usuarioRepository.findByEmail(dto.getCorreoEstudiante()).isPresent()) {
-                    System.out.println("❌ Email ya registrado: " + dto.getCorreoEstudiante());
-                    errores++;
-                    resultados.add(ExcelImportResultado.builder()
-                            .fila(numeroFila)
-                            .nombreEstudiante(dto.getNombreCompleto())
-                            .estado("error")
-                            .mensaje("El correo ya está registrado en el sistema")
-                            .detalles(dto.getCorreoEstudiante())
-                            .build());
-                    continue;
-                }
+                System.out.println("✅ Todas las validaciones previas completadas");
                 
-                // Verificar si el documento ya existe
-                if (estudianteRepository.findByNumeroDocumento(dto.getNumeroDocumento()).isPresent()) {
-                    System.out.println("❌ Documento ya registrado: " + dto.getNumeroDocumento());
-                    errores++;
-                    resultados.add(ExcelImportResultado.builder()
-                            .fila(numeroFila)
-                            .nombreEstudiante(dto.getNombreCompleto())
-                            .estado("error")
-                            .mensaje("El número de documento ya está registrado")
-                            .detalles(dto.getNumeroDocumento())
-                            .build());
-                    continue;
-                }
-                
+                // ✅ PASO 2: GUARDAR DATOS (ahora que sabemos que son válidos)
                 // ============ 1. CREAR ESTUDIANTE ============
                 System.out.println("\n1️⃣ Creando Estudiante...");
                 Estudiante estudiante = dtoAEstudiante(dto, sede);
@@ -1244,8 +1460,16 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                 
                 // ============ 2. GENERAR CREDENCIALES ============
                 System.out.println("\n2️⃣ Generando credenciales...");
-                // Usuario = Email del estudiante
-                String username = dto.getCorreoEstudiante();
+                
+                // Sanitizar email - si es inválido, generar uno automático
+                String emailSanitizado = sanitizarEmail(dto.getCorreoEstudiante());
+                if (emailSanitizado == null) {
+                    // Generar email automático: usuario_[documento]@galacticos.local
+                    emailSanitizado = "usuario_" + dto.getNumeroDocumento() + "@galacticos.local";
+                    System.out.println("⚠️ Email inválido o vacío, generando automático: " + emailSanitizado);
+                }
+                
+                String username = emailSanitizado;
                 // Contraseña = Número de documento del estudiante
                 String passwordGenerada = dto.getNumeroDocumento();
                 System.out.println("✅ Usuario (email): " + username);
@@ -1255,14 +1479,14 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                 System.out.println("\n3️⃣ Creando Usuario...");
                 System.out.println("   - Nombre: " + dto.getNombreCompleto());
                 System.out.println("   - Username: " + username);
-                System.out.println("   - Email: " + dto.getCorreoEstudiante());
+                System.out.println("   - Email: " + emailSanitizado);
                 System.out.println("   - Rol: " + (rolEstudiante != null ? rolEstudiante.getNombre() : "NULL"));
                 System.out.println("   - Estudiante ID: " + estudianteGuardado.getIdEstudiante());
                 
                 Usuario usuario = new Usuario();
                 usuario.setNombre(dto.getNombreCompleto());
                 usuario.setUsername(username);
-                usuario.setEmail(dto.getCorreoEstudiante());
+                usuario.setEmail(emailSanitizado);
                 usuario.setPassword(passwordEncoder.encode(passwordGenerada));
                 usuario.setRol(rolEstudiante);
                 usuario.setEstudiante(estudianteGuardado);
@@ -1330,6 +1554,14 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                 System.out.println("Mensaje: " + e.getMessage());
                 e.printStackTrace();
                 
+                // 🔧 LIMPIAR SESIÓN SUCIA DE HIBERNATE
+                try {
+                    entityManager.clear();
+                    System.out.println("✅ Sesión de Hibernate limpiada");
+                } catch (Exception clearError) {
+                    System.out.println("⚠️ Error limpiando sesión: " + clearError.getMessage());
+                }
+                
                 errores++;
                 resultados.add(ExcelImportResultado.builder()
                         .fila(numeroFila)
@@ -1363,6 +1595,147 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
     // Retornar respuesta con timestamp ISO 8601
     return new ExcelImportResponseDTO(exitosos, errores, resultados.size(), resultados);
 }
+
+    /**
+     * Procesa una fila individual en su PROPIA TRANSACCIÓN independiente.
+     * Esto permite que cada fila exitosa se comprometa independientemente,
+     * evitando que una fila fallida cause rollback de todas las demás.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public ExcelImportResultado procesarFilaExcelEnTransaccionIndependiente(
+            ExcelEstudianteImportDTO dto,
+            Integer sedeId,
+            int numeroFila,
+            galacticos_app_back.galacticos.entity.Rol rolEstudiante) {
+        
+        try {
+            System.out.println("\n--- Procesando Fila " + numeroFila + " ---");
+            System.out.println("Nombre: " + dto.getNombreCompleto());
+            System.out.println("Documento: " + dto.getNumeroDocumento());
+            System.out.println("Email: " + dto.getCorreoEstudiante());
+            
+            // ✅ PASO 1: TODAS LAS VALIDACIONES Y QUERIES ANTES DE GUARDAR NADA
+            System.out.println("\n1️⃣ Realizando validaciones previas...");
+            
+            // Validar DTO
+            String erroresValidacion = validarDtoEstudiante(dto);
+            if (!erroresValidacion.isEmpty()) {
+                System.out.println("❌ Validación fallida: " + erroresValidacion);
+                return ExcelImportResultado.builder()
+                        .fila(numeroFila)
+                        .nombreEstudiante(dto.getNombreCompleto())
+                        .estado("error")
+                        .mensaje("Validación fallida")
+                        .detalles(erroresValidacion)
+                        .build();
+            }
+            
+            // Verificar si el email ya existe
+            if (usuarioRepository.findByEmail(dto.getCorreoEstudiante()).isPresent()) {
+                System.out.println("❌ Email ya registrado: " + dto.getCorreoEstudiante());
+                return ExcelImportResultado.builder()
+                        .fila(numeroFila)
+                        .nombreEstudiante(dto.getNombreCompleto())
+                        .estado("error")
+                        .mensaje("El correo ya está registrado en el sistema")
+                        .detalles(dto.getCorreoEstudiante())
+                        .build();
+            }
+            
+            // Verificar si el documento ya existe
+            galacticos_app_back.galacticos.entity.Sede sede = sedeRepository.findById(sedeId)
+                    .orElseThrow(() -> new RuntimeException("Sede no encontrada"));
+            
+            if (estudianteRepository.findByNumeroDocumento(dto.getNumeroDocumento()).isPresent()) {
+                System.out.println("❌ Documento ya registrado: " + dto.getNumeroDocumento());
+                return ExcelImportResultado.builder()
+                        .fila(numeroFila)
+                        .nombreEstudiante(dto.getNombreCompleto())
+                        .estado("error")
+                        .mensaje("El número de documento ya está registrado")
+                        .detalles(dto.getNumeroDocumento())
+                        .build();
+            }
+            
+            System.out.println("✅ Todas las validaciones previas completadas");
+            
+            // ✅ PASO 2: GUARDAR DATOS (ahora que sabemos que son válidos)
+            // ============ 1. CREAR ESTUDIANTE ============
+            System.out.println("\n1️⃣ Creando Estudiante...");
+            Estudiante estudiante = dtoAEstudiante(dto, sede);
+            estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
+            Estudiante estudianteGuardado = estudianteRepository.save(estudiante);
+            System.out.println("✅ Estudiante guardado - ID: " + estudianteGuardado.getIdEstudiante());
+            
+            // ============ 2. GENERAR CREDENCIALES ============
+            System.out.println("\n2️⃣ Generando credenciales...");
+            String emailSanitizado = sanitizarEmail(dto.getCorreoEstudiante());
+            if (emailSanitizado == null) {
+                emailSanitizado = "usuario_" + dto.getNumeroDocumento() + "@galacticos.local";
+                System.out.println("⚠️ Email inválido o vacío, generando automático: " + emailSanitizado);
+            }
+            
+            String username = emailSanitizado;
+            String passwordGenerada = dto.getNumeroDocumento();
+            System.out.println("✅ Usuario (email): " + username);
+            System.out.println("✅ Contraseña (documento): " + passwordGenerada);
+            
+            // ============ 3. CREAR USUARIO ============
+            System.out.println("\n3️⃣ Creando Usuario...");
+            Usuario usuario = new Usuario();
+            usuario.setNombre(dto.getNombreCompleto());
+            usuario.setUsername(username);
+            usuario.setEmail(emailSanitizado);
+            usuario.setPassword(passwordEncoder.encode(passwordGenerada));
+            usuario.setRol(rolEstudiante);
+            usuario.setEstudiante(estudianteGuardado);
+            usuario.setEstado(true);
+            usuario.setRequiereChangioPassword(true);
+            usuario.setTipoDocumento(dto.getTipoDocumento());
+            usuario.setNumeroDocumento(dto.getNumeroDocumento());
+            
+            Usuario usuarioGuardado = usuarioRepository.save(usuario);
+            System.out.println("✅ Usuario guardado - ID: " + usuarioGuardado.getIdUsuario());
+            System.out.println("   Email: " + usuarioGuardado.getEmail());
+            System.out.println("   Username: " + usuarioGuardado.getUsername());
+            
+            // ============ 4. CREAR MEMBRESÍA ============
+            System.out.println("\n4️⃣ Creando Membresía...");
+            Membresia membresia = new Membresia();
+            membresia.setEstudiante(estudianteGuardado);
+            membresia.setEquipo(null);
+            membresia.setFechaInicio(LocalDate.now());
+            membresia.setFechaFin(LocalDate.now().plusMonths(1));
+            membresia.setValorMensual(new BigDecimal("50000"));
+            membresia.setEstado(false);
+            
+            Membresia membresiaGuardada = membresiaRepository.save(membresia);
+            System.out.println("✅ Membresía guardada - ID: " + membresiaGuardada.getIdMembresia());
+            
+            // ============ REGISTRO DE ÉXITO ============
+            System.out.println("\n✅✅ FILA PROCESADA CON ÉXITO ✅✅");
+            return ExcelImportResultado.builder()
+                    .fila(numeroFila)
+                    .estudianteId(estudianteGuardado.getIdEstudiante())
+                    .nombreEstudiante(dto.getNombreCompleto())
+                    .usuarioCreado(username)
+                    .passwordGenerada(passwordGenerada)
+                    .estado("exitoso")
+                    .mensaje("Estudiante y usuario creados correctamente")
+                    .build();
+            
+        } catch (Exception e) {
+            System.out.println("\n❌ ERROR procesando fila: " + e.getMessage());
+            e.printStackTrace();
+            return ExcelImportResultado.builder()
+                    .fila(numeroFila)
+                    .nombreEstudiante(dto.getNombreCompleto())
+                    .estado("error")
+                    .mensaje("Error al procesar fila: " + e.getMessage())
+                    .detalles(e.getClass().getSimpleName())
+                    .build();
+        }
+    }
 
     /**
      * Registra en auditoría la importación de estudiantes

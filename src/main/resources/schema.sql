@@ -135,7 +135,7 @@ CREATE TABLE estudiante (
     jornada ENUM('MAÑANA','TARDE','NOCHE','UNICA'),
     grado_actual INT,
     eps VARCHAR(100),
-    tipo_sangre VARCHAR(5),
+    tipo_sangre VARCHAR(20),
     alergias TEXT,
     enfermedades_condiciones TEXT,
     medicamentos TEXT,

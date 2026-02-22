@@ -83,7 +83,7 @@ public class Estudiante {
     @Column(length = 100)
     private String eps;
     
-    @Column(length = 5)
+    @Column(length = 20)
     private String tipoSangre;
     
     @Column(columnDefinition = "TEXT")
