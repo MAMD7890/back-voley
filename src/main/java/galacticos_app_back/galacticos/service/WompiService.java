@@ -828,10 +828,44 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     }
                     
                 } else if ("APPROVED".equals(wompiResponse.getStatus())) {
-                    responseBuilder
-                            .success(true)
-                            .message("Pago aprobado en Wompi pero no encontrado en el sistema")
-                            .pagoActualizado(false);
+                    // ✅ AUTO-CREAR el pago si está aprobado en Wompi pero no existe en BD
+                    log.info("Pago APPROVED en Wompi pero no existe en BD. Auto-creando para referencia: {}", reference);
+                    
+                    // Crear response temporal con el monto de Wompi para pasarlo al método
+                    ConfirmacionPagoResponse tempResponse = ConfirmacionPagoResponse.builder()
+                            .monto(BigDecimal.valueOf(wompiResponse.getAmountInCents() / 100.0))
+                            .build();
+                    
+                    Pago nuevoPago = createPaymentFromReference(
+                            wompiResponse.getReference() != null ? wompiResponse.getReference() : reference, 
+                            transactionId, 
+                            tempResponse);
+                    
+                    if (nuevoPago != null) {
+                        responseBuilder
+                                .success(true)
+                                .message("Pago creado y confirmado exitosamente")
+                                .idPago(nuevoPago.getIdPago())
+                                .estadoPago(nuevoPago.getEstadoPago().name())
+                                .fechaPago(nuevoPago.getFechaPago())
+                                .horaPago(nuevoPago.getHoraPago())
+                                .mesPagado(nuevoPago.getMesPagado())
+                                .pagoActualizado(true)
+                                .estudianteActualizado(true);
+                        
+                        if (nuevoPago.getEstudiante() != null) {
+                            responseBuilder
+                                    .idEstudiante(nuevoPago.getEstudiante().getIdEstudiante())
+                                    .nombreEstudiante(nuevoPago.getEstudiante().getNombreCompleto())
+                                    .estadoEstudiante(nuevoPago.getEstudiante().getEstadoPago().name())
+                                    .colorEstadoEstudiante(getColorEstadoPago(nuevoPago.getEstudiante().getEstadoPago()));
+                        }
+                    } else {
+                        responseBuilder
+                                .success(true)
+                                .message("Pago aprobado en Wompi pero no se pudo crear en el sistema (verifique la referencia)")
+                                .pagoActualizado(false);
+                    }
                 } else {
                     responseBuilder
                             .success(false)
@@ -886,10 +920,121 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
      * Confirma un pago usando solo la referencia
      */
     public ConfirmacionPagoResponse confirmarPagoPorReferencia(String reference) {
+        return confirmarPagoPorReferencia(reference, null);
+    }
+    
+    /**
+     * Confirma un pago usando referencia y opcionalmente transactionId
+     * Si el pago no existe en BD pero está aprobado en Wompi, lo crea automáticamente
+     */
+    public ConfirmacionPagoResponse confirmarPagoPorReferencia(String reference, String transactionId) {
+        // Si tenemos transactionId, usar el método completo
+        if (transactionId != null && !transactionId.isEmpty()) {
+            ConfirmacionPagoRequest request = ConfirmacionPagoRequest.builder()
+                    .reference(reference)
+                    .transactionId(transactionId)
+                    .build();
+            
+            ConfirmacionPagoResponse response = confirmarPago(request);
+            
+            // Si el pago está aprobado pero no existe en el sistema, crear el pago
+            if (response.isSuccess() && response.getIdPago() == null && 
+                "APPROVED".equals(response.getStatusWompi())) {
+                
+                log.info("Pago aprobado pero no existe en BD. Creando pago para referencia: {}", reference);
+                Pago nuevoPago = createPaymentFromReference(reference, transactionId, response);
+                
+                if (nuevoPago != null) {
+                    response = ConfirmacionPagoResponse.builder()
+                            .success(true)
+                            .message("Pago creado y confirmado exitosamente")
+                            .transactionId(transactionId)
+                            .reference(reference)
+                            .statusWompi(response.getStatusWompi())
+                            .paymentMethodType(response.getPaymentMethodType())
+                            .monto(response.getMonto())
+                            .moneda(response.getMoneda())
+                            .idPago(nuevoPago.getIdPago())
+                            .estadoPago(nuevoPago.getEstadoPago().name())
+                            .fechaPago(nuevoPago.getFechaPago())
+                            .horaPago(nuevoPago.getHoraPago())
+                            .mesPagado(nuevoPago.getMesPagado())
+                            .idEstudiante(nuevoPago.getEstudiante() != null ? nuevoPago.getEstudiante().getIdEstudiante() : null)
+                            .nombreEstudiante(nuevoPago.getEstudiante() != null ? nuevoPago.getEstudiante().getNombreCompleto() : null)
+                            .pagoActualizado(true)
+                            .estudianteActualizado(true)
+                            .build();
+                }
+            }
+            
+            return response;
+        }
+        
+        // Solo referencia - buscar en BD
         ConfirmacionPagoRequest request = ConfirmacionPagoRequest.builder()
                 .reference(reference)
                 .build();
         return confirmarPago(request);
+    }
+    
+    /**
+     * Crea un pago a partir de la referencia cuando el pago está aprobado en Wompi pero no existe en BD
+     */
+    private Pago createPaymentFromReference(String reference, String transactionId, ConfirmacionPagoResponse wompiResponse) {
+        try {
+            // Extraer datos de la referencia (formato: PAY-{idEstudiante}-{mes}-{random})
+            String[] parts = reference.split("-");
+            if (parts.length < 4 || !"PAY".equals(parts[0])) {
+                log.warn("Formato de referencia inválido: {}", reference);
+                return null;
+            }
+            
+            Integer idEstudiante = Integer.parseInt(parts[1]);
+            String mesPagado = parts[2] + "-" + parts[3].substring(0, Math.min(2, parts[3].length()));
+            
+            // Ajustar formato del mes si es necesario (puede ser 2025-02 o similar)
+            if (parts.length >= 4 && parts[2].length() == 4) {
+                // El formato parece ser PAY-{id}-{año}-{mes}-{random}
+                mesPagado = parts[2] + "-" + parts[3];
+                // Si hay más partes, el random está después
+            }
+            
+            // Buscar estudiante
+            Optional<Estudiante> estudianteOpt = estudianteRepository.findById(idEstudiante);
+            if (!estudianteOpt.isPresent()) {
+                log.warn("Estudiante no encontrado: {}", idEstudiante);
+                return null;
+            }
+            
+            Estudiante estudiante = estudianteOpt.get();
+            
+            // Crear el pago
+            Pago pago = new Pago();
+            pago.setEstudiante(estudiante);
+            pago.setValor(wompiResponse.getMonto() != null ? wompiResponse.getMonto() : BigDecimal.ZERO);
+            pago.setReferenciaPago(reference);
+            pago.setWompiTransactionId(transactionId);
+            pago.setMesPagado(mesPagado);
+            pago.setMetodoPago(Pago.MetodoPago.ONLINE);
+            pago.setEstadoPago(Pago.EstadoPago.PAGADO);
+            pago.setFechaPago(LocalDate.now());
+            pago.setHoraPago(LocalTime.now());
+            
+            Pago pagoGuardado = pagoRepository.save(pago);
+            
+            // Actualizar estudiante
+            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+            estudianteRepository.save(estudiante);
+            
+            log.info("✅ Pago creado automáticamente - ID: {}, Estudiante: {}, Referencia: {}", 
+                    pagoGuardado.getIdPago(), idEstudiante, reference);
+            
+            return pagoGuardado;
+            
+        } catch (Exception e) {
+            log.error("Error creando pago desde referencia: {}", e.getMessage(), e);
+            return null;
+        }
     }
     
     /**

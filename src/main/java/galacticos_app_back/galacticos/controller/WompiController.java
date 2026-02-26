@@ -273,14 +273,35 @@ public class WompiController {
     
     /**
      * Confirma un pago usando solo la referencia
+     * Acepta transactionId como query param para consultar Wompi directamente
      */
     @PostMapping("/confirmar-pago/referencia/{reference}")
     public ResponseEntity<ConfirmacionPagoResponse> confirmarPagoPorReferencia(
-            @PathVariable String reference) {
+            @PathVariable String reference,
+            @RequestParam(required = false) String transactionId) {
         
-        log.info("Confirmando pago por referencia: {}", reference);
+        log.info("Confirmando pago por referencia: {}, transactionId: {}", reference, transactionId);
         
-        ConfirmacionPagoResponse response = wompiService.confirmarPagoPorReferencia(reference);
+        ConfirmacionPagoResponse response = wompiService.confirmarPagoPorReferencia(reference, transactionId);
+        
+        if (response.isSuccess()) {
+            return ResponseEntity.ok(response);
+        }
+        return ResponseEntity.badRequest().body(response);
+    }
+    
+    /**
+     * Confirma un pago usando referencia y/o transactionId del body
+     * Este endpoint es más flexible para el frontend
+     */
+    @PostMapping("/confirmar-pago/transaction")
+    public ResponseEntity<ConfirmacionPagoResponse> confirmarPagoTransaction(
+            @RequestBody ConfirmacionPagoRequest request) {
+        
+        log.info("Confirmando pago - TransactionId: {}, Reference: {}", 
+                request.getTransactionId(), request.getReference());
+        
+        ConfirmacionPagoResponse response = wompiService.confirmarPago(request);
         
         if (response.isSuccess()) {
             return ResponseEntity.ok(response);
