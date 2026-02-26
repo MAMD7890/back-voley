@@ -49,15 +49,18 @@ public class WompiController {
     public ResponseEntity<?> generateIntegritySignature(
             @RequestBody IntegritySignatureRequest request) {
         try {
-            log.info("Generando firma de integridad para referencia: {}", request.getReference());
+            log.info("Generando firma de integridad para referencia: {}, idEstudiante: {}", 
+                    request.getReference(), request.getIdEstudiante());
             
             String currency = request.getCurrency() != null ? request.getCurrency() : "COP";
             
+            // Pasar idEstudiante y mesPagado para crear el pago pendiente
             WompiIntegritySignature signature = wompiService.generateIntegritySignature(
                     request.getAmount(),
                     request.getReference(),
-                    currency
-            );
+                    currency,
+                    request.getIdEstudiante(),
+                    request.getMesPagado());
             
             log.info("✅ Firma de integridad generada correctamente - Reference: {}", request.getReference());
             return ResponseEntity.ok(signature);
