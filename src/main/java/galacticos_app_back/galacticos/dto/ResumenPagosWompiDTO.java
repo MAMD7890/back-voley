@@ -38,6 +38,7 @@ public class ResumenPagosWompiDTO {
     private Long estudiantesAlDia;
     private Long estudiantesEnMora;
     private Long estudiantesPendientes;
+    private Long estudiantesConCompromiso;
     
     // Lista de últimos pagos
     private List<ReportePagoWompiDTO> ultimosPagos;

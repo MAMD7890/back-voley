@@ -162,6 +162,71 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
     /**
      * Consulta el estado de una transacción
      */
+    /**
+     * Obtiene el estado de una transacción por referencia (buscando en BD local)
+     * Útil cuando se necesita verificar el estado usando solo la referencia del pago
+     */
+    public WompiTransactionResponse getTransactionByReference(String reference) {
+        try {
+            log.info("Buscando transacción por referencia: {}", reference);
+            
+            // Buscar el pago en la base de datos local
+            Optional<Pago> pagoOpt = pagoRepository.findByReferenciaPago(reference);
+            
+            if (!pagoOpt.isPresent()) {
+                log.warn("No se encontró pago con referencia: {}", reference);
+                return WompiTransactionResponse.builder()
+                        .success(false)
+                        .message("Pago no encontrado")
+                        .build();
+            }
+            
+            Pago pago = pagoOpt.get();
+            
+            // Mapear el estado del pago a estado de Wompi
+            String status = mapEstadoPagoToWompiStatus(pago.getEstadoPago());
+            
+            WompiTransactionResponse response = WompiTransactionResponse.builder()
+                    .transactionId(pago.getWompiTransactionId())
+                    .status(status)
+                    .reference(pago.getReferenciaPago())
+                    .amountInCents(pago.getValor().multiply(BigDecimal.valueOf(100)).longValue())
+                    .currency("COP")
+                    .paymentMethodType(pago.getMetodoPago() != null ? pago.getMetodoPago().name() : null)
+                    .success(true)
+                    .message("Transacción encontrada")
+                    .build();
+            
+            log.info("✅ Transacción encontrada - Reference: {}, Status: {}", reference, status);
+            return response;
+            
+        } catch (Exception e) {
+            log.error("Error consultando transacción por referencia: {}", e.getMessage(), e);
+            return WompiTransactionResponse.builder()
+                    .success(false)
+                    .message("Error: " + e.getMessage())
+                    .build();
+        }
+    }
+    
+    /**
+     * Mapea el estado del pago local al estado de Wompi
+     */
+    private String mapEstadoPagoToWompiStatus(Pago.EstadoPago estadoPago) {
+        switch (estadoPago) {
+            case PAGADO:
+                return "APPROVED";
+            case PENDIENTE:
+                return "PENDING";
+            case RECHAZADO:
+                return "DECLINED";
+            case VENCIDO:
+                return "VOIDED";
+            default:
+                return "PENDING";
+        }
+    }
+    
     public WompiTransactionResponse getTransactionStatus(String transactionId) {
         try {
             HttpHeaders headers = new HttpHeaders();

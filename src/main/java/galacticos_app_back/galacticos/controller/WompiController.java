@@ -115,6 +115,37 @@ public class WompiController {
     }
     
     /**
+     * Consulta el estado de una transacción por referencia
+     * Busca en la base de datos local usando la referencia del pago
+     * 
+     * GET /api/wompi/transaction/reference/PAY-123-2025-02-ABC123
+     * 
+     * Response (200 OK):
+     * {
+     *   "transactionId": "123456-abcd-efgh",
+     *   "status": "APPROVED",
+     *   "reference": "PAY-123-2025-02-ABC123",
+     *   "amountInCents": 8000000,
+     *   "currency": "COP",
+     *   "paymentMethodType": "CARD",
+     *   "success": true,
+     *   "message": "Transacción encontrada"
+     * }
+     */
+    @GetMapping("/transaction/reference/{reference}")
+    public ResponseEntity<WompiTransactionResponse> getTransactionByReference(
+            @PathVariable String reference) {
+        
+        log.info("Consultando transacción por referencia: {}", reference);
+        WompiTransactionResponse response = wompiService.getTransactionByReference(reference);
+        
+        if (response.isSuccess()) {
+            return ResponseEntity.ok(response);
+        }
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    }
+    
+    /**
      * Verifica y sincroniza el estado de un pago con Wompi
      * Útil si el webhook no llegó o para verificar manualmente
      */

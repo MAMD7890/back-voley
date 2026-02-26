@@ -221,6 +221,9 @@ public class PagoService {
         long estudiantesPendientes = estudiantes.stream()
                 .filter(e -> e.getEstadoPago() == Estudiante.EstadoPago.PENDIENTE)
                 .count();
+        long estudiantesConCompromiso = estudiantes.stream()
+                .filter(e -> e.getEstadoPago() == Estudiante.EstadoPago.COMPROMISO_PAGO)
+                .count();
         
         // Últimos 10 pagos
         List<ReportePagoWompiDTO> ultimosPagos = todosPagos.stream()
@@ -256,6 +259,7 @@ public class PagoService {
                 .estudiantesAlDia(estudiantesAlDia)
                 .estudiantesEnMora(estudiantesEnMora)
                 .estudiantesPendientes(estudiantesPendientes)
+                .estudiantesConCompromiso(estudiantesConCompromiso)
                 .ultimosPagos(ultimosPagos)
                 .pagosPorMes(pagosPorMes)
                 .build();
