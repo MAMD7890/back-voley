@@ -26,6 +26,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -446,6 +447,104 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             log.error("Error sincronizando pago: {}", e.getMessage(), e);
             return false;
         }
+    }
+    
+    /**
+     * Sincroniza masivamente las fechas de todos los pagos de Wompi
+     * Consulta la API de Wompi para cada pago y actualiza la fecha/hora correcta
+     * @return Map con estadísticas de la sincronización
+     */
+    public Map<String, Object> sincronizarFechasPagosWompi() {
+        Map<String, Object> resultado = new HashMap<>();
+        List<Map<String, Object>> detalles = new ArrayList<>();
+        
+        int totalPagos = 0;
+        int actualizados = 0;
+        int errores = 0;
+        int sinCambios = 0;
+        
+        try {
+            List<Pago> pagosWompi = pagoRepository.findAllWithWompiTransactionId();
+            totalPagos = pagosWompi.size();
+            
+            log.info("🔄 Iniciando sincronización masiva de {} pagos de Wompi", totalPagos);
+            
+            for (Pago pago : pagosWompi) {
+                Map<String, Object> detallePago = new HashMap<>();
+                detallePago.put("idPago", pago.getIdPago());
+                detallePago.put("transactionId", pago.getWompiTransactionId());
+                detallePago.put("fechaAnterior", pago.getFechaPago() != null ? pago.getFechaPago().toString() : null);
+                detallePago.put("horaAnterior", pago.getHoraPago() != null ? pago.getHoraPago().toString() : null);
+                
+                try {
+                    // Consultar la transacción en Wompi
+                    WompiTransactionResponse wompiResponse = getTransactionStatus(pago.getWompiTransactionId());
+                    
+                    if (wompiResponse.isSuccess() && wompiResponse.getFinalizedAt() != null) {
+                        // Convertir fecha de Wompi a Colombia
+                        LocalDateTime fechaColombia = convertirFechaWompiAColombia(wompiResponse.getFinalizedAt());
+                        
+                        LocalDate nuevaFecha = fechaColombia.toLocalDate();
+                        java.time.LocalTime nuevaHora = fechaColombia.toLocalTime();
+                        
+                        // Verificar si hay cambios
+                        boolean fechaCambiada = !nuevaFecha.equals(pago.getFechaPago());
+                        boolean horaCambiada = pago.getHoraPago() == null || !nuevaHora.equals(pago.getHoraPago());
+                        
+                        if (fechaCambiada || horaCambiada) {
+                            pago.setFechaPago(nuevaFecha);
+                            pago.setHoraPago(nuevaHora);
+                            pagoRepository.save(pago);
+                            
+                            detallePago.put("fechaNueva", nuevaFecha.toString());
+                            detallePago.put("horaNueva", nuevaHora.toString());
+                            detallePago.put("estado", "ACTUALIZADO");
+                            detallePago.put("wompiTimestamp", wompiResponse.getFinalizedAt());
+                            actualizados++;
+                            
+                            log.info("✅ Pago {} actualizado: {} {} -> {} {}", 
+                                pago.getIdPago(), 
+                                detallePago.get("fechaAnterior"), detallePago.get("horaAnterior"),
+                                nuevaFecha, nuevaHora);
+                        } else {
+                            detallePago.put("estado", "SIN_CAMBIOS");
+                            sinCambios++;
+                        }
+                    } else {
+                        detallePago.put("estado", "ERROR_WOMPI");
+                        detallePago.put("mensaje", wompiResponse.getMessage());
+                        errores++;
+                        log.warn("⚠️ No se pudo obtener fecha de Wompi para pago {}: {}", 
+                            pago.getIdPago(), wompiResponse.getMessage());
+                    }
+                } catch (Exception e) {
+                    detallePago.put("estado", "ERROR");
+                    detallePago.put("mensaje", e.getMessage());
+                    errores++;
+                    log.error("❌ Error sincronizando pago {}: {}", pago.getIdPago(), e.getMessage());
+                }
+                
+                detalles.add(detallePago);
+                
+                // Pequeña pausa para no saturar la API de Wompi
+                Thread.sleep(100);
+            }
+            
+            log.info("✅ Sincronización completada: {} total, {} actualizados, {} sin cambios, {} errores",
+                totalPagos, actualizados, sinCambios, errores);
+                
+        } catch (Exception e) {
+            log.error("❌ Error en sincronización masiva: {}", e.getMessage(), e);
+            resultado.put("error", e.getMessage());
+        }
+        
+        resultado.put("totalPagos", totalPagos);
+        resultado.put("actualizados", actualizados);
+        resultado.put("sinCambios", sinCambios);
+        resultado.put("errores", errores);
+        resultado.put("detalles", detalles);
+        
+        return resultado;
     }
     
     /**

@@ -308,4 +308,52 @@ public class WompiController {
         }
         return ResponseEntity.badRequest().body(response);
     }
+    
+    /**
+     * Sincroniza masivamente las fechas de todos los pagos de Wompi
+     * Consulta la API de Wompi para cada transacción y actualiza la fecha/hora
+     * con el timestamp real de la transacción convertido a zona horaria de Colombia.
+     * 
+     * ADVERTENCIA: Este endpoint puede tardar varios segundos si hay muchos pagos.
+     * Usar solo cuando sea necesario corregir fechas históricas.
+     * 
+     * POST /api/wompi/sync-all-dates
+     * 
+     * Response:
+     * {
+     *   "totalPagos": 15,
+     *   "actualizados": 10,
+     *   "sinCambios": 3,
+     *   "errores": 2,
+     *   "detalles": [
+     *     {
+     *       "idPago": 123,
+     *       "transactionId": "abc-123",
+     *       "fechaAnterior": "2026-03-03",
+     *       "fechaNueva": "2026-03-02",
+     *       "estado": "ACTUALIZADO"
+     *     }
+     *   ]
+     * }
+     */
+    @PostMapping("/sync-all-dates")
+    public ResponseEntity<Map<String, Object>> sincronizarFechasPagosWompi() {
+        log.info("🔄 Iniciando sincronización masiva de fechas de pagos Wompi");
+        
+        try {
+            Map<String, Object> resultado = wompiService.sincronizarFechasPagosWompi();
+            
+            log.info("✅ Sincronización completada - Actualizados: {}, Errores: {}", 
+                resultado.get("actualizados"), resultado.get("errores"));
+            
+            return ResponseEntity.ok(resultado);
+            
+        } catch (Exception e) {
+            log.error("❌ Error en sincronización masiva: {}", e.getMessage(), e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", "Error: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(error);
+        }
+    }
 }

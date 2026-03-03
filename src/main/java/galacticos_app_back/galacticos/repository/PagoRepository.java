@@ -49,4 +49,8 @@ public interface PagoRepository extends JpaRepository<Pago, Integer> {
     
     // Contar pagos por método
     long countByMetodoPago(Pago.MetodoPago metodoPago);
+    
+    // Buscar todos los pagos con wompiTransactionId (para sincronización masiva)
+    @Query("SELECT p FROM Pago p WHERE p.wompiTransactionId IS NOT NULL ORDER BY p.idPago DESC")
+    List<Pago> findAllWithWompiTransactionId();
 }
