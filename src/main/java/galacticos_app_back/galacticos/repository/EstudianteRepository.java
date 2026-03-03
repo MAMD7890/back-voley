@@ -20,4 +20,7 @@ public interface EstudianteRepository extends JpaRepository<Estudiante, Integer>
     
     // Buscar por documento
     Optional<Estudiante> findByNumeroDocumento(String numeroDocumento);
+    
+    // Buscar por correo electrónico del estudiante (para vincular pagos de Wompi)
+    Optional<Estudiante> findByCorreoEstudiante(String correoEstudiante);
 }

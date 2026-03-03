@@ -668,10 +668,24 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     // Esto puede pasar si el webhook llega antes de que se guarde el pago
                     log.info("Intentando crear registro de pago desde webhook...");
                     
-                    if ("APPROVED".equals(status) && transaction.getCustomerEmail() != null) {
-                        // Buscar estudiante por email
-                        // Por ahora solo logueamos
-                        log.info("Email del cliente: {}", transaction.getCustomerEmail());
+                    if ("APPROVED".equals(status)) {
+                        // Intentar crear el pago automáticamente desde la referencia
+                        Pago nuevoPago = createPaymentFromWebhook(
+                            wompiReference, 
+                            transactionId, 
+                            transaction.getAmountInCents(),
+                            transaction.getFinalizedAt(),
+                            transaction.getCustomerEmail()
+                        );
+                        
+                        if (nuevoPago != null) {
+                            log.info("✅ Pago APROBADO creado automáticamente desde webhook - ID: {}, Estudiante: {}", 
+                                transactionId, nuevoPago.getEstudiante() != null ? nuevoPago.getEstudiante().getIdEstudiante() : "N/A");
+                            return true;
+                        } else {
+                            log.warn("❌ No se pudo crear el pago automáticamente. Referencia: {}, Email: {}", 
+                                wompiReference, transaction.getCustomerEmail());
+                        }
                     }
                 }
             }
@@ -1188,6 +1202,124 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             
         } catch (Exception e) {
             log.error("Error creando pago desde referencia: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+    
+    /**
+     * Crea un pago automáticamente desde el webhook de Wompi cuando no se encuentra el pago pendiente.
+     * Prioridad de búsqueda del estudiante:
+     * 1. Extraer ID del estudiante de la referencia (formato: PAY-{idEstudiante}-{mes}-{random})
+     * 2. Buscar estudiante por correo electrónico (fallback)
+     * 
+     * IMPORTANTE: El correo del cliente en Wompi NO necesita coincidir con el correo registrado
+     * del estudiante. El sistema siempre intentará vincular por la referencia del pago primero.
+     * 
+     * @param wompiReference Referencia de la transacción de Wompi
+     * @param transactionId ID de la transacción de Wompi
+     * @param amountInCents Monto en centavos
+     * @param finalizedAt Timestamp de finalización de Wompi
+     * @param customerEmail Email del cliente (usado solo como fallback)
+     * @return Pago creado o null si no se pudo crear
+     */
+    private Pago createPaymentFromWebhook(String wompiReference, String transactionId, 
+            Long amountInCents, String finalizedAt, String customerEmail) {
+        try {
+            LocalDateTime fechaColombia = convertirFechaWompiAColombia(finalizedAt);
+            BigDecimal monto = amountInCents != null ? BigDecimal.valueOf(amountInCents / 100.0) : BigDecimal.ZERO;
+            
+            Estudiante estudiante = null;
+            String mesPagado = null;
+            
+            // ESTRATEGIA 1: Extraer ID del estudiante de la referencia
+            // Formato esperado: PAY-{idEstudiante}-{año}-{mes}-{random} o PAY-{idEstudiante}-{mes}-{random}
+            if (wompiReference != null && wompiReference.startsWith("PAY-")) {
+                try {
+                    String[] parts = wompiReference.split("-");
+                    if (parts.length >= 3) {
+                        Integer idEstudiante = Integer.parseInt(parts[1]);
+                        
+                        // Extraer el mes del pago
+                        if (parts.length >= 5 && parts[2].length() == 4) {
+                            // Formato: PAY-{id}-{año}-{mes}-{random}
+                            mesPagado = parts[2] + "-" + parts[3];
+                        } else if (parts.length >= 4) {
+                            // Formato: PAY-{id}-{mes}-{random}
+                            mesPagado = parts[2];
+                        }
+                        
+                        Optional<Estudiante> estudianteOpt = estudianteRepository.findById(idEstudiante);
+                        if (estudianteOpt.isPresent()) {
+                            estudiante = estudianteOpt.get();
+                            log.info("✅ Estudiante encontrado por referencia: ID={}, Nombre={}", 
+                                idEstudiante, estudiante.getNombreCompleto());
+                        }
+                    }
+                } catch (NumberFormatException e) {
+                    log.warn("No se pudo extraer ID del estudiante de la referencia: {}", wompiReference);
+                }
+            }
+            
+            // ESTRATEGIA 2: Buscar por correo electrónico (fallback)
+            // Solo se usa si no se encontró el estudiante por referencia
+            if (estudiante == null && customerEmail != null && !customerEmail.isEmpty()) {
+                log.info("Buscando estudiante por email: {}", customerEmail);
+                Optional<Estudiante> estudianteOpt = estudianteRepository.findByCorreoEstudiante(customerEmail);
+                if (estudianteOpt.isPresent()) {
+                    estudiante = estudianteOpt.get();
+                    log.info("✅ Estudiante encontrado por email: ID={}, Nombre={}", 
+                        estudiante.getIdEstudiante(), estudiante.getNombreCompleto());
+                    
+                    // Generar mes de pago si no se pudo extraer de la referencia
+                    if (mesPagado == null) {
+                        mesPagado = fechaColombia.getYear() + "-" + String.format("%02d", fechaColombia.getMonthValue());
+                    }
+                }
+            }
+            
+            // Si no se encontró estudiante, no podemos crear el pago
+            if (estudiante == null) {
+                log.warn("❌ No se encontró estudiante para crear el pago. Referencia: {}, Email: {}", 
+                    wompiReference, customerEmail);
+                return null;
+            }
+            
+            // Verificar si ya existe un pago con esta transacción
+            Optional<Pago> existingPago = pagoRepository.findByWompiTransactionId(transactionId);
+            if (existingPago.isPresent()) {
+                log.info("Pago ya existe para transacción: {}", transactionId);
+                return existingPago.get();
+            }
+            
+            // Crear el pago
+            Pago pago = new Pago();
+            pago.setEstudiante(estudiante);
+            pago.setValor(monto);
+            pago.setReferenciaPago(wompiReference);
+            pago.setWompiTransactionId(transactionId);
+            pago.setMesPagado(mesPagado != null ? mesPagado : fechaColombia.getYear() + "-" + String.format("%02d", fechaColombia.getMonthValue()));
+            pago.setMetodoPago(Pago.MetodoPago.ONLINE);
+            pago.setEstadoPago(Pago.EstadoPago.PAGADO);
+            pago.setFechaPago(fechaColombia.toLocalDate());
+            pago.setHoraPago(fechaColombia.toLocalTime());
+            
+            Pago pagoGuardado = pagoRepository.save(pago);
+            
+            // Actualizar estado del estudiante a AL_DIA
+            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+            estudianteRepository.save(estudiante);
+            
+            log.info("✅ Pago creado automáticamente desde webhook - ID Pago: {}, Estudiante: {} ({}), Monto: {}, Mes: {}", 
+                pagoGuardado.getIdPago(), 
+                estudiante.getIdEstudiante(), 
+                estudiante.getNombreCompleto(),
+                monto,
+                mesPagado);
+            
+            return pagoGuardado;
+            
+        } catch (Exception e) {
+            log.error("Error creando pago desde webhook: {}", e.getMessage(), e);
             return null;
         }
     }
