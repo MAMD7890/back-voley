@@ -21,4 +21,8 @@ public class WompiTransactionResponse {
     private String redirectUrl;
     private String message;
     private boolean success;
+    
+    // Fechas de Wompi (formato ISO 8601 UTC)
+    private String createdAt;
+    private String finalizedAt;
 }

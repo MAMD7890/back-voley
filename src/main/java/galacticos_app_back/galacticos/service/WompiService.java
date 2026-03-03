@@ -18,9 +18,14 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +39,7 @@ public class WompiService {
     
     // Zona horaria de Colombia para registro correcto de fechas de pago
     private static final ZoneId ZONA_COLOMBIA = ZoneId.of("America/Bogota");
+    private static final ZoneId ZONA_UTC = ZoneId.of("UTC");
     
     private final WompiConfig wompiConfig;
     private final RestTemplate restTemplate;
@@ -319,8 +325,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 log.info("===== RESPUESTA COMPLETA DE WOMPI (getTransaction) =====");
                 log.info("Body completo: {}", response.getBody());
                 log.info("Data node: {}", data);
-                log.info("Data fields - id: {}, status: {}, reference: {}", 
-                    data.get("id"), data.get("status"), data.get("reference"));
+                log.info("Data fields - id: {}, status: {}, reference: {}, finalized_at: {}", 
+                    data.get("id"), data.get("status"), data.get("reference"), data.get("finalized_at"));
                 log.info("========================================================");
                 
                 return WompiTransactionResponse.builder()
@@ -330,6 +336,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         .amountInCents(data.get("amount_in_cents").asLong())
                         .currency(data.get("currency").asText())
                         .paymentMethodType(data.has("payment_method_type") ? data.get("payment_method_type").asText() : null)
+                        .createdAt(data.has("created_at") ? data.get("created_at").asText() : null)
+                        .finalizedAt(data.has("finalized_at") ? data.get("finalized_at").asText() : null)
                         .success(true)
                         .message("Transacción consultada exitosamente")
                         .build();
@@ -359,8 +367,11 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             String reference = transaction.getReference();
             Long amountInCents = transaction.getAmountInCents();
             
-            log.info("Sincronizando pago - ID: {}, Estado: {}, Referencia: {}", 
-                transactionId, status, reference);
+            // Convertir fecha de Wompi (UTC) a Colombia
+            LocalDateTime fechaColombia = convertirFechaWompiAColombia(transaction.getFinalizedAt());
+            
+            log.info("Sincronizando pago - ID: {}, Estado: {}, Referencia: {}, Fecha Wompi: {}", 
+                transactionId, status, reference, fechaColombia);
             
             // Buscar el pago
             Optional<Pago> pagoOpt = pagoRepository.findByWompiTransactionId(transactionId);
@@ -384,8 +395,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 
                 if ("APPROVED".equals(status)) {
                     pago.setEstadoPago(Pago.EstadoPago.PAGADO);
-                    pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
-                    pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
+                    pago.setFechaPago(fechaColombia.toLocalDate());
+                    pago.setHoraPago(fechaColombia.toLocalTime());
                     pago.setWompiTransactionId(transactionId);
                     if (reference != null) {
                         pago.setReferenciaPago(reference);
@@ -405,8 +416,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     
                 } else if ("DECLINED".equals(status) || "VOIDED".equals(status) || "ERROR".equals(status)) {
                     pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
-                    pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
-                    pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
+                    pago.setFechaPago(fechaColombia.toLocalDate());
+                    pago.setHoraPago(fechaColombia.toLocalTime());
                     pago.setWompiTransactionId(transactionId);
                     if (reference != null) {
                         pago.setReferenciaPago(reference);
@@ -460,8 +471,11 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 String wompiReference = transaction.getReference();
                 String transactionId = transaction.getId();
                 
-                log.info("Transacción actualizada - ID: {}, Estado: {}, Referencia Wompi: {}", 
-                        transactionId, status, wompiReference);
+                // Convertir fecha de Wompi (UTC) a Colombia
+                LocalDateTime fechaColombia = convertirFechaWompiAColombia(transaction.getFinalizedAt());
+                
+                log.info("Transacción actualizada - ID: {}, Estado: {}, Referencia Wompi: {}, Fecha Wompi: {}", 
+                        transactionId, status, wompiReference, fechaColombia);
                 
                 // Intentar buscar el pago por diferentes métodos
                 Optional<Pago> pagoOpt = Optional.empty();
@@ -498,8 +512,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     switch (status) {
                         case "APPROVED":
                             pago.setEstadoPago(Pago.EstadoPago.PAGADO);
-                            pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
-                            pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
+                            pago.setFechaPago(fechaColombia.toLocalDate());
+                            pago.setHoraPago(fechaColombia.toLocalTime());
                             pago.setWompiTransactionId(transactionId);
                             pago.setReferenciaPago(wompiReference); // Actualizar con la referencia real
                             
@@ -520,8 +534,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         case "ERROR":
                             pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
                             pago.setWompiTransactionId(transactionId);
-                            pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
-                            pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
+                            pago.setFechaPago(fechaColombia.toLocalDate());
+                            pago.setHoraPago(fechaColombia.toLocalTime());
                             
                             // Si el pago falla, el estudiante puede quedar en mora
                             if (pago.getEstudiante() != null) {
@@ -643,6 +657,36 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
     }
     
     /**
+     * Convierte una fecha de Wompi (formato ISO 8601 UTC) a LocalDateTime en zona Colombia
+     * Formato esperado: "2026-03-02T14:03:07.000Z" o "2026-03-02T14:03:07.000+00:00"
+     * @param wompiTimestamp El timestamp de Wompi en UTC
+     * @return LocalDateTime en zona horaria de Colombia, o fecha/hora actual de Colombia si hay error
+     */
+    private LocalDateTime convertirFechaWompiAColombia(String wompiTimestamp) {
+        if (wompiTimestamp == null || wompiTimestamp.isEmpty()) {
+            log.warn("Timestamp de Wompi nulo o vacío, usando fecha actual de Colombia");
+            return LocalDateTime.now(ZONA_COLOMBIA);
+        }
+        
+        try {
+            // Parsear el timestamp ISO 8601 de Wompi
+            Instant instant = Instant.parse(wompiTimestamp);
+            
+            // Convertir de UTC a zona de Colombia
+            ZonedDateTime fechaUTC = instant.atZone(ZONA_UTC);
+            ZonedDateTime fechaColombia = fechaUTC.withZoneSameInstant(ZONA_COLOMBIA);
+            
+            log.debug("Fecha Wompi UTC: {} -> Colombia: {}", wompiTimestamp, fechaColombia);
+            return fechaColombia.toLocalDateTime();
+            
+        } catch (DateTimeParseException e) {
+            log.warn("Error parseando fecha de Wompi '{}': {}. Usando fecha actual de Colombia", 
+                    wompiTimestamp, e.getMessage());
+            return LocalDateTime.now(ZONA_COLOMBIA);
+        }
+    }
+    
+    /**
      * Obtiene los métodos de pago aceptados
      */
     public JsonNode getAcceptanceToken() {
@@ -719,6 +763,9 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     ConfirmacionPagoResponse.builder();
             
             if (wompiResponse != null && wompiResponse.isSuccess()) {
+                // Convertir fecha de Wompi (UTC) a Colombia
+                LocalDateTime fechaColombia = convertirFechaWompiAColombia(wompiResponse.getFinalizedAt());
+                
                 responseBuilder
                         .transactionId(wompiResponse.getTransactionId())
                         .reference(wompiResponse.getReference())
@@ -736,8 +783,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     // Actualizar pago si no está ya pagado
                     if (pago.getEstadoPago() != Pago.EstadoPago.PAGADO) {
                         pago.setEstadoPago(Pago.EstadoPago.PAGADO);
-                        pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
-                        pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
+                        pago.setFechaPago(fechaColombia.toLocalDate());
+                        pago.setHoraPago(fechaColombia.toLocalTime());
                         pago.setWompiTransactionId(transactionId);
                         if (wompiResponse.getReference() != null) {
                             pago.setReferenciaPago(wompiResponse.getReference());
@@ -787,8 +834,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         
                         if (pago.getEstadoPago() != Pago.EstadoPago.RECHAZADO) {
                             pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
-                            pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
-                            pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
+                            pago.setFechaPago(fechaColombia.toLocalDate());
+                            pago.setHoraPago(fechaColombia.toLocalTime());
                             pago.setWompiTransactionId(transactionId);
                             if (wompiResponse.getReference() != null) {
                                 pago.setReferenciaPago(wompiResponse.getReference());
@@ -843,7 +890,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     Pago nuevoPago = createPaymentFromReference(
                             wompiResponse.getReference() != null ? wompiResponse.getReference() : reference, 
                             transactionId, 
-                            tempResponse);
+                            tempResponse,
+                            wompiResponse.getFinalizedAt());
                     
                     if (nuevoPago != null) {
                         responseBuilder
@@ -946,7 +994,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 "APPROVED".equals(response.getStatusWompi())) {
                 
                 log.info("Pago aprobado pero no existe en BD. Creando pago para referencia: {}", reference);
-                Pago nuevoPago = createPaymentFromReference(reference, transactionId, response);
+                Pago nuevoPago = createPaymentFromReference(reference, transactionId, response, null);
                 
                 if (nuevoPago != null) {
                     response = ConfirmacionPagoResponse.builder()
@@ -983,9 +1031,13 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
     
     /**
      * Crea un pago a partir de la referencia cuando el pago está aprobado en Wompi pero no existe en BD
+     * @param finalizedAt Timestamp de Wompi en formato ISO 8601 UTC (ej: "2026-03-02T14:03:07.000Z")
      */
-    private Pago createPaymentFromReference(String reference, String transactionId, ConfirmacionPagoResponse wompiResponse) {
+    private Pago createPaymentFromReference(String reference, String transactionId, ConfirmacionPagoResponse wompiResponse, String finalizedAt) {
         try {
+            // Convertir fecha de Wompi (UTC) a Colombia
+            LocalDateTime fechaColombia = convertirFechaWompiAColombia(finalizedAt);
+            
             // Extraer datos de la referencia (formato: PAY-{idEstudiante}-{mes}-{random})
             String[] parts = reference.split("-");
             if (parts.length < 4 || !"PAY".equals(parts[0])) {
@@ -1021,8 +1073,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             pago.setMesPagado(mesPagado);
             pago.setMetodoPago(Pago.MetodoPago.ONLINE);
             pago.setEstadoPago(Pago.EstadoPago.PAGADO);
-            pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
-            pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
+            pago.setFechaPago(fechaColombia.toLocalDate());
+            pago.setHoraPago(fechaColombia.toLocalTime());
             
             Pago pagoGuardado = pagoRepository.save(pago);
             
