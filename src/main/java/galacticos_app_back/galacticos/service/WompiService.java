@@ -20,6 +20,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 public class WompiService {
+    
+    // Zona horaria de Colombia para registro correcto de fechas de pago
+    private static final ZoneId ZONA_COLOMBIA = ZoneId.of("America/Bogota");
     
     private final WompiConfig wompiConfig;
     private final RestTemplate restTemplate;
@@ -110,8 +114,8 @@ public class WompiService {
             pago.setMesPagado(mesPagado);
             pago.setMetodoPago(Pago.MetodoPago.ONLINE);
             pago.setEstadoPago(Pago.EstadoPago.PENDIENTE);
-            pago.setFechaPago(LocalDate.now());
-            pago.setHoraPago(LocalTime.now());
+            pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
+            pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
             
             pagoRepository.save(pago);
             log.info("✅ Pago pendiente creado - Referencia: {}, Estudiante: {}, Monto: {}", 
@@ -380,8 +384,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 
                 if ("APPROVED".equals(status)) {
                     pago.setEstadoPago(Pago.EstadoPago.PAGADO);
-                    pago.setFechaPago(LocalDate.now());
-                    pago.setHoraPago(LocalTime.now());
+                    pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
+                    pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
                     pago.setWompiTransactionId(transactionId);
                     if (reference != null) {
                         pago.setReferenciaPago(reference);
@@ -401,8 +405,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     
                 } else if ("DECLINED".equals(status) || "VOIDED".equals(status) || "ERROR".equals(status)) {
                     pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
-                    pago.setFechaPago(LocalDate.now());
-                    pago.setHoraPago(LocalTime.now());
+                    pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
+                    pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
                     pago.setWompiTransactionId(transactionId);
                     if (reference != null) {
                         pago.setReferenciaPago(reference);
@@ -494,8 +498,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     switch (status) {
                         case "APPROVED":
                             pago.setEstadoPago(Pago.EstadoPago.PAGADO);
-                            pago.setFechaPago(LocalDate.now());
-                            pago.setHoraPago(LocalTime.now());
+                            pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
+                            pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
                             pago.setWompiTransactionId(transactionId);
                             pago.setReferenciaPago(wompiReference); // Actualizar con la referencia real
                             
@@ -516,8 +520,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         case "ERROR":
                             pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
                             pago.setWompiTransactionId(transactionId);
-                            pago.setFechaPago(LocalDate.now());
-                            pago.setHoraPago(LocalTime.now());
+                            pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
+                            pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
                             
                             // Si el pago falla, el estudiante puede quedar en mora
                             if (pago.getEstudiante() != null) {
@@ -732,8 +736,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     // Actualizar pago si no está ya pagado
                     if (pago.getEstadoPago() != Pago.EstadoPago.PAGADO) {
                         pago.setEstadoPago(Pago.EstadoPago.PAGADO);
-                        pago.setFechaPago(LocalDate.now());
-                        pago.setHoraPago(LocalTime.now());
+                        pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
+                        pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
                         pago.setWompiTransactionId(transactionId);
                         if (wompiResponse.getReference() != null) {
                             pago.setReferenciaPago(wompiResponse.getReference());
@@ -783,8 +787,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         
                         if (pago.getEstadoPago() != Pago.EstadoPago.RECHAZADO) {
                             pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
-                            pago.setFechaPago(LocalDate.now());
-                            pago.setHoraPago(LocalTime.now());
+                            pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
+                            pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
                             pago.setWompiTransactionId(transactionId);
                             if (wompiResponse.getReference() != null) {
                                 pago.setReferenciaPago(wompiResponse.getReference());
@@ -1017,8 +1021,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             pago.setMesPagado(mesPagado);
             pago.setMetodoPago(Pago.MetodoPago.ONLINE);
             pago.setEstadoPago(Pago.EstadoPago.PAGADO);
-            pago.setFechaPago(LocalDate.now());
-            pago.setHoraPago(LocalTime.now());
+            pago.setFechaPago(LocalDate.now(ZONA_COLOMBIA));
+            pago.setHoraPago(LocalTime.now(ZONA_COLOMBIA));
             
             Pago pagoGuardado = pagoRepository.save(pago);
             
