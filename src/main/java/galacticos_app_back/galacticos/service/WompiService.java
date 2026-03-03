@@ -548,6 +548,125 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
     }
     
     /**
+     * Sincroniza todos los pagos PENDIENTES online consultando la API de Wompi.
+     * Este método es útil cuando los webhooks no llegaron o los pagos quedaron sin actualizar.
+     * 
+     * Para cada pago pendiente:
+     * 1. Si tiene wompiTransactionId, consulta el estado en Wompi
+     * 2. Si el pago está APPROVED en Wompi, actualiza el estado del pago y del estudiante
+     * 
+     * @return Map con estadísticas de la sincronización
+     */
+    public Map<String, Object> sincronizarPagosPendientes() {
+        Map<String, Object> resultado = new HashMap<>();
+        List<Map<String, Object>> detalles = new ArrayList<>();
+        
+        int totalPagos = 0;
+        int actualizados = 0;
+        int sinTransactionId = 0;
+        int yaAprobados = 0;
+        int rechazados = 0;
+        int errores = 0;
+        
+        try {
+            List<Pago> pagosPendientes = pagoRepository.findPagosPendientesOnline();
+            totalPagos = pagosPendientes.size();
+            
+            log.info("🔄 Iniciando sincronización de {} pagos pendientes ONLINE", totalPagos);
+            
+            for (Pago pago : pagosPendientes) {
+                Map<String, Object> detallePago = new HashMap<>();
+                detallePago.put("idPago", pago.getIdPago());
+                detallePago.put("referencia", pago.getReferenciaPago());
+                detallePago.put("transactionId", pago.getWompiTransactionId());
+                detallePago.put("estudiante", pago.getEstudiante() != null ? 
+                    pago.getEstudiante().getIdEstudiante() + " - " + pago.getEstudiante().getNombreCompleto() : "N/A");
+                
+                try {
+                    // Si tiene wompiTransactionId, consultar directamente
+                    if (pago.getWompiTransactionId() != null && !pago.getWompiTransactionId().isEmpty()) {
+                        WompiTransactionResponse wompiResponse = getTransactionStatus(pago.getWompiTransactionId());
+                        
+                        if (wompiResponse.isSuccess()) {
+                            String statusWompi = wompiResponse.getStatus();
+                            detallePago.put("statusWompi", statusWompi);
+                            
+                            if ("APPROVED".equals(statusWompi)) {
+                                // Convertir fecha de Wompi a Colombia
+                                LocalDateTime fechaColombia = convertirFechaWompiAColombia(wompiResponse.getFinalizedAt());
+                                
+                                // Actualizar el pago
+                                pago.setEstadoPago(Pago.EstadoPago.PAGADO);
+                                pago.setFechaPago(fechaColombia.toLocalDate());
+                                pago.setHoraPago(fechaColombia.toLocalTime());
+                                pagoRepository.save(pago);
+                                
+                                // Actualizar el estudiante
+                                if (pago.getEstudiante() != null) {
+                                    Estudiante estudiante = pago.getEstudiante();
+                                    estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                                    estudianteRepository.save(estudiante);
+                                    detallePago.put("estudianteActualizado", true);
+                                }
+                                
+                                detallePago.put("estado", "ACTUALIZADO_A_PAGADO");
+                                actualizados++;
+                                log.info("✅ Pago {} actualizado a PAGADO - Estudiante: {}", 
+                                    pago.getIdPago(), pago.getEstudiante() != null ? pago.getEstudiante().getNombreCompleto() : "N/A");
+                                
+                            } else if ("DECLINED".equals(statusWompi) || "VOIDED".equals(statusWompi) || "ERROR".equals(statusWompi)) {
+                                pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
+                                pagoRepository.save(pago);
+                                detallePago.put("estado", "ACTUALIZADO_A_RECHAZADO");
+                                rechazados++;
+                                log.info("❌ Pago {} actualizado a RECHAZADO - Status Wompi: {}", pago.getIdPago(), statusWompi);
+                                
+                            } else {
+                                detallePago.put("estado", "PENDIENTE_EN_WOMPI");
+                                log.info("⏳ Pago {} sigue pendiente en Wompi", pago.getIdPago());
+                            }
+                        } else {
+                            detallePago.put("estado", "ERROR_CONSULTA_WOMPI");
+                            detallePago.put("mensaje", wompiResponse.getMessage());
+                            errores++;
+                        }
+                    } else {
+                        detallePago.put("estado", "SIN_TRANSACTION_ID");
+                        sinTransactionId++;
+                    }
+                    
+                } catch (Exception e) {
+                    detallePago.put("estado", "ERROR");
+                    detallePago.put("mensaje", e.getMessage());
+                    errores++;
+                    log.error("❌ Error procesando pago {}: {}", pago.getIdPago(), e.getMessage());
+                }
+                
+                detalles.add(detallePago);
+                
+                // Pequeña pausa para no saturar la API de Wompi
+                Thread.sleep(100);
+            }
+            
+            log.info("✅ Sincronización de pagos pendientes completada: {} total, {} actualizados, {} rechazados, {} sin transactionId, {} errores",
+                totalPagos, actualizados, rechazados, sinTransactionId, errores);
+                
+        } catch (Exception e) {
+            log.error("❌ Error en sincronización de pagos pendientes: {}", e.getMessage(), e);
+            resultado.put("error", e.getMessage());
+        }
+        
+        resultado.put("totalPagosPendientes", totalPagos);
+        resultado.put("actualizadosAPagado", actualizados);
+        resultado.put("actualizadosARechazado", rechazados);
+        resultado.put("sinTransactionId", sinTransactionId);
+        resultado.put("errores", errores);
+        resultado.put("detalles", detalles);
+        
+        return resultado;
+    }
+    
+    /**
      * Procesa el webhook de Wompi
      */
     public boolean processWebhook(WompiWebhookEvent event, String receivedChecksum) {

@@ -53,4 +53,8 @@ public interface PagoRepository extends JpaRepository<Pago, Integer> {
     // Buscar todos los pagos con wompiTransactionId (para sincronización masiva)
     @Query("SELECT p FROM Pago p WHERE p.wompiTransactionId IS NOT NULL ORDER BY p.idPago DESC")
     List<Pago> findAllWithWompiTransactionId();
+    
+    // Buscar pagos pendientes ONLINE (para sincronización con Wompi)
+    @Query("SELECT p FROM Pago p WHERE p.estadoPago = 'PENDIENTE' AND p.metodoPago = 'ONLINE' ORDER BY p.idPago DESC")
+    List<Pago> findPagosPendientesOnline();
 }

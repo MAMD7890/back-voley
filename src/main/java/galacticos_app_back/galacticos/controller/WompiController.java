@@ -356,4 +356,47 @@ public class WompiController {
             return ResponseEntity.internalServerError().body(error);
         }
     }
+    
+    /**
+     * Sincroniza TODOS los pagos pendientes ONLINE consultando la API de Wompi.
+     * Este endpoint es útil cuando los webhooks no llegaron o para corregir estados.
+     * 
+     * Proceso:
+     * 1. Obtiene todos los pagos con estado PENDIENTE y método ONLINE
+     * 2. Para cada pago con wompiTransactionId, consulta el estado en Wompi
+     * 3. Si está APPROVED: actualiza pago a PAGADO y estudiante a AL_DIA
+     * 4. Si está DECLINED/VOIDED/ERROR: actualiza pago a RECHAZADO
+     * 
+     * POST /api/wompi/sync-pending-payments
+     * 
+     * Response:
+     * {
+     *   "totalPagosPendientes": 10,
+     *   "actualizadosAPagado": 5,
+     *   "actualizadosARechazado": 1,
+     *   "sinTransactionId": 3,
+     *   "errores": 1,
+     *   "detalles": [...]
+     * }
+     */
+    @PostMapping("/sync-pending-payments")
+    public ResponseEntity<Map<String, Object>> sincronizarPagosPendientes() {
+        log.info("🔄 Iniciando sincronización de pagos pendientes");
+        
+        try {
+            Map<String, Object> resultado = wompiService.sincronizarPagosPendientes();
+            
+            log.info("✅ Sincronización de pagos pendientes completada - Actualizados: {}, Errores: {}", 
+                resultado.get("actualizadosAPagado"), resultado.get("errores"));
+            
+            return ResponseEntity.ok(resultado);
+            
+        } catch (Exception e) {
+            log.error("❌ Error sincronizando pagos pendientes: {}", e.getMessage(), e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", "Error: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(error);
+        }
+    }
 }
