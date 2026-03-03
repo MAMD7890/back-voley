@@ -660,6 +660,134 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
     }
     
     /**
+     * Corrige los estados de estudiantes que tienen pagos PENDIENTES sin confirmar.
+     * 
+     * Proceso:
+     * 1. Obtiene todos los pagos PENDIENTES sin wompiTransactionId
+     * 2. Para cada pago, si el estudiante está AL_DIA pero tiene este pago pendiente,
+     *    verifica si tiene otro pago PAGADO del mes actual
+     * 3. Si NO tiene pago confirmado del mes, cambia el estado del estudiante a PENDIENTE
+     * 4. Opcionalmente elimina los pagos pendientes sin transactionId (pagos "fantasma")
+     * 
+     * @param eliminarPagosPendientes Si true, elimina los pagos pendientes sin transactionId
+     * @return Map con estadísticas de la corrección
+     */
+    public Map<String, Object> corregirEstadosEstudiantes(boolean eliminarPagosPendientes) {
+        Map<String, Object> resultado = new HashMap<>();
+        List<Map<String, Object>> detalles = new ArrayList<>();
+        
+        int totalPagosPendientes = 0;
+        int estudiantesCorregidos = 0;
+        int pagosEliminados = 0;
+        int errores = 0;
+        
+        try {
+            // Obtener mes actual
+            String mesActual = LocalDate.now(ZONA_COLOMBIA).getYear() + "-" + 
+                    String.format("%02d", LocalDate.now(ZONA_COLOMBIA).getMonthValue());
+            
+            log.info("🔄 Corrigiendo estados de estudiantes - Mes actual: {}", mesActual);
+            
+            // Obtener pagos pendientes sin transactionId
+            List<Pago> pagosPendientes = pagoRepository.findPagosPendientesOnline();
+            totalPagosPendientes = pagosPendientes.size();
+            
+            // Agrupar pagos por estudiante
+            Map<Integer, List<Pago>> pagosPorEstudiante = new HashMap<>();
+            for (Pago pago : pagosPendientes) {
+                if (pago.getEstudiante() != null && pago.getWompiTransactionId() == null) {
+                    Integer idEst = pago.getEstudiante().getIdEstudiante();
+                    pagosPorEstudiante.computeIfAbsent(idEst, k -> new ArrayList<>()).add(pago);
+                }
+            }
+            
+            log.info("📋 Estudiantes con pagos pendientes sin confirmar: {}", pagosPorEstudiante.size());
+            
+            for (Map.Entry<Integer, List<Pago>> entry : pagosPorEstudiante.entrySet()) {
+                Integer idEstudiante = entry.getKey();
+                List<Pago> pagosPendientesEstudiante = entry.getValue();
+                
+                Map<String, Object> detalle = new HashMap<>();
+                detalle.put("idEstudiante", idEstudiante);
+                detalle.put("pagosPendientes", pagosPendientesEstudiante.size());
+                
+                try {
+                    Optional<Estudiante> estudianteOpt = estudianteRepository.findById(idEstudiante);
+                    if (!estudianteOpt.isPresent()) {
+                        detalle.put("error", "Estudiante no encontrado");
+                        errores++;
+                        detalles.add(detalle);
+                        continue;
+                    }
+                    
+                    Estudiante estudiante = estudianteOpt.get();
+                    detalle.put("nombre", estudiante.getNombreCompleto());
+                    detalle.put("estadoAnterior", estudiante.getEstadoPago().name());
+                    
+                    // Verificar si tiene un pago CONFIRMADO (con transactionId) del mes actual
+                    boolean tienePagoConfirmado = pagoRepository.findByEstudianteIdEstudiante(idEstudiante)
+                            .stream()
+                            .anyMatch(p -> p.getEstadoPago() == Pago.EstadoPago.PAGADO 
+                                    && p.getWompiTransactionId() != null
+                                    && mesActual.equals(p.getMesPagado()));
+                    
+                    detalle.put("tienePagoConfirmadoMesActual", tienePagoConfirmado);
+                    
+                    // Si NO tiene pago confirmado y está AL_DIA, corregir a PENDIENTE
+                    if (!tienePagoConfirmado && estudiante.getEstadoPago() == Estudiante.EstadoPago.AL_DIA) {
+                        estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
+                        estudianteRepository.save(estudiante);
+                        
+                        detalle.put("estadoNuevo", "PENDIENTE");
+                        detalle.put("accion", "ESTADO_CORREGIDO");
+                        estudiantesCorregidos++;
+                        
+                        log.info("✅ Estudiante {} corregido: AL_DIA -> PENDIENTE", estudiante.getNombreCompleto());
+                    } else {
+                        detalle.put("estadoNuevo", estudiante.getEstadoPago().name());
+                        detalle.put("accion", tienePagoConfirmado ? "TIENE_PAGO_CONFIRMADO" : "SIN_CAMBIOS");
+                    }
+                    
+                    // Eliminar pagos pendientes sin confirmar si se solicita
+                    if (eliminarPagosPendientes) {
+                        for (Pago pagoPendiente : pagosPendientesEstudiante) {
+                            if (pagoPendiente.getWompiTransactionId() == null) {
+                                pagoRepository.delete(pagoPendiente);
+                                pagosEliminados++;
+                                log.info("🗑️ Pago pendiente eliminado: ID={}, Ref={}", 
+                                    pagoPendiente.getIdPago(), pagoPendiente.getReferenciaPago());
+                            }
+                        }
+                        detalle.put("pagosEliminados", pagosPendientesEstudiante.size());
+                    }
+                    
+                } catch (Exception e) {
+                    detalle.put("error", e.getMessage());
+                    errores++;
+                    log.error("❌ Error procesando estudiante {}: {}", idEstudiante, e.getMessage());
+                }
+                
+                detalles.add(detalle);
+            }
+            
+            log.info("✅ Corrección completada: {} estudiantes corregidos, {} pagos eliminados, {} errores",
+                estudiantesCorregidos, pagosEliminados, errores);
+                
+        } catch (Exception e) {
+            log.error("❌ Error en corrección de estados: {}", e.getMessage(), e);
+            resultado.put("error", e.getMessage());
+        }
+        
+        resultado.put("totalPagosPendientesSinConfirmar", totalPagosPendientes);
+        resultado.put("estudiantesCorregidos", estudiantesCorregidos);
+        resultado.put("pagosEliminados", pagosEliminados);
+        resultado.put("errores", errores);
+        resultado.put("detalles", detalles);
+        
+        return resultado;
+    }
+    
+    /**
      * Consulta las transacciones recientes de Wompi y las vincula con pagos pendientes.
      * Este método es útil cuando el webhook no llegó y los pagos quedaron sin wompiTransactionId.
      * 

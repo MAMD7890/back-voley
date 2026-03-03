@@ -444,4 +444,47 @@ public class WompiController {
             return ResponseEntity.internalServerError().body(error);
         }
     }
+    
+    /**
+     * Corrige los estados de estudiantes que tienen pagos PENDIENTES sin confirmar.
+     * 
+     * Los estudiantes que tienen pagos PENDIENTES sin transactionId de Wompi
+     * (es decir, abrieron el widget pero NO completaron el pago) y están marcados
+     * como AL_DIA incorrectamente, serán corregidos a estado PENDIENTE.
+     * 
+     * POST /api/wompi/corregir-estados
+     * 
+     * Query params:
+     * - eliminarPagos: true/false - Si true, elimina los pagos pendientes sin confirmar
+     * 
+     * Response:
+     * {
+     *   "totalPagosPendientesSinConfirmar": 21,
+     *   "estudiantesCorregidos": 5,
+     *   "pagosEliminados": 0,
+     *   "errores": 0,
+     *   "detalles": [...]
+     * }
+     */
+    @PostMapping("/corregir-estados")
+    public ResponseEntity<Map<String, Object>> corregirEstadosEstudiantes(
+            @RequestParam(defaultValue = "false") boolean eliminarPagos) {
+        log.info("🔄 Iniciando corrección de estados de estudiantes - eliminarPagos: {}", eliminarPagos);
+        
+        try {
+            Map<String, Object> resultado = wompiService.corregirEstadosEstudiantes(eliminarPagos);
+            
+            log.info("✅ Corrección completada - Estudiantes corregidos: {}, Pagos eliminados: {}", 
+                resultado.get("estudiantesCorregidos"), resultado.get("pagosEliminados"));
+            
+            return ResponseEntity.ok(resultado);
+            
+        } catch (Exception e) {
+            log.error("❌ Error corrigiendo estados: {}", e.getMessage(), e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", "Error: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(error);
+        }
+    }
 }
