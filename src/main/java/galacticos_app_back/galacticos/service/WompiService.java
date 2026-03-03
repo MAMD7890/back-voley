@@ -50,7 +50,7 @@ public class WompiService {
     
     /**
      * Genera la firma de integridad para el widget de Wompi
-     * Y crea el pago pendiente en la base de datos si se proporciona idEstudiante
+     * NOTA: Ya NO crea pago pendiente aquí. El pago solo se crea cuando Wompi confirme.
      */
     public WompiIntegritySignature generateIntegritySignature(BigDecimal amount, String reference, String currency) {
         return generateIntegritySignature(amount, reference, currency, null, null);
@@ -58,7 +58,11 @@ public class WompiService {
     
     /**
      * Genera la firma de integridad para el widget de Wompi
-     * Y crea el pago pendiente en la base de datos
+     * IMPORTANTE: NO se crea pago pendiente aquí. El pago solo se crea cuando:
+     * 1. Llega el webhook de Wompi con status APPROVED
+     * 2. El frontend confirma el pago con un transactionId válido
+     * 
+     * Esto evita crear pagos "fantasma" cuando el usuario abre el widget pero no completa el pago.
      */
     public WompiIntegritySignature generateIntegritySignature(BigDecimal amount, String reference, String currency, 
                                                                Integer idEstudiante, String mesPagado) {
@@ -68,22 +72,10 @@ public class WompiService {
         String dataToSign = reference + amountInCents + currency + wompiConfig.getIntegritySecret();
         String signature = sha256(dataToSign);
         
-        // ✅ CREAR PAGO PENDIENTE EN LA BASE DE DATOS
-        if (idEstudiante != null) {
-            createPendingPayment(idEstudiante, amount, reference, mesPagado);
-        } else {
-            // Intentar extraer idEstudiante de la referencia (formato: PAY-{id}-{mes}-{random})
-            try {
-                String[] parts = reference.split("-");
-                if (parts.length >= 3 && "PAY".equals(parts[0])) {
-                    Integer extractedId = Integer.parseInt(parts[1]);
-                    String extractedMes = parts[2];
-                    createPendingPayment(extractedId, amount, reference, extractedMes);
-                }
-            } catch (Exception e) {
-                log.warn("No se pudo extraer idEstudiante de la referencia: {}", reference);
-            }
-        }
+        // ⚠️ NO crear pago pendiente aquí - solo se crea cuando Wompi confirme el pago
+        // Esto evita crear pagos que nunca se completaron
+        log.info("📝 Firma de integridad generada - Referencia: {}, Estudiante: {}, Monto: {}", 
+                reference, idEstudiante, amount);
         
         return WompiIntegritySignature.builder()
                 .reference(reference)
@@ -208,9 +200,10 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 data.get("id"), data.get("active"), data.get("merchant_public_key"));
             log.info("=========================================================");
             
-            // Crear registro de pago pendiente
-            createPendingPayment(request.getIdEstudiante(), request.getAmount(), 
-                    reference, request.getMesPagado());
+            // ⚠️ NO crear pago pendiente aquí - solo se crea cuando Wompi confirme
+            // El pago se creará automáticamente cuando llegue el webhook o se confirme manualmente
+            log.info("📝 Link de pago creado - Referencia: {}, Estudiante: {}", 
+                    reference, request.getIdEstudiante());
             
             return WompiPaymentLinkResponse.builder()
                     .success(true)
