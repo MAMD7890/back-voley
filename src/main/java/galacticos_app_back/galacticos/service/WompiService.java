@@ -667,6 +667,277 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
     }
     
     /**
+     * Consulta las transacciones recientes de Wompi y las vincula con pagos pendientes.
+     * Este método es útil cuando el webhook no llegó y los pagos quedaron sin wompiTransactionId.
+     * 
+     * Proceso:
+     * 1. Obtiene las últimas transacciones de Wompi (por defecto las últimas 100)
+     * 2. Para cada transacción APPROVED, busca si hay un pago pendiente con esa referencia
+     * 3. Si encuentra el pago, lo actualiza a PAGADO y actualiza el estudiante a AL_DIA
+     * 
+     * @return Map con estadísticas de la sincronización
+     */
+    public Map<String, Object> sincronizarDesdeTransaccionesWompi() {
+        Map<String, Object> resultado = new HashMap<>();
+        List<Map<String, Object>> detalles = new ArrayList<>();
+        
+        int transaccionesConsultadas = 0;
+        int vinculados = 0;
+        int yaExistentes = 0;
+        int sinMatchPendiente = 0;
+        int errores = 0;
+        
+        try {
+            log.info("🔄 Consultando transacciones recientes de Wompi...");
+            
+            // Consultar transacciones de Wompi
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(wompiConfig.getPrivateKey());
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+            
+            // Consultar últimas 100 transacciones
+            ResponseEntity<String> response = restTemplate.exchange(
+                    wompiConfig.getApiUrl() + "/transactions?per_page=100",
+                    HttpMethod.GET,
+                    entity,
+                    String.class
+            );
+            
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                resultado.put("error", "Error consultando transacciones de Wompi");
+                return resultado;
+            }
+            
+            JsonNode jsonResponse = objectMapper.readTree(response.getBody());
+            JsonNode dataArray = jsonResponse.get("data");
+            
+            if (dataArray == null || !dataArray.isArray()) {
+                resultado.put("error", "No se encontraron transacciones");
+                return resultado;
+            }
+            
+            transaccionesConsultadas = dataArray.size();
+            log.info("📋 Se encontraron {} transacciones en Wompi", transaccionesConsultadas);
+            
+            // Obtener todos los pagos pendientes para hacer matching
+            List<Pago> pagosPendientes = pagoRepository.findPagosPendientesOnline();
+            Map<String, Pago> pagosPorReferencia = new HashMap<>();
+            for (Pago pago : pagosPendientes) {
+                if (pago.getReferenciaPago() != null) {
+                    pagosPorReferencia.put(pago.getReferenciaPago(), pago);
+                }
+            }
+            
+            log.info("📋 Pagos pendientes en BD: {}", pagosPendientes.size());
+            
+            for (JsonNode txNode : dataArray) {
+                Map<String, Object> detalle = new HashMap<>();
+                
+                String transactionId = txNode.has("id") ? txNode.get("id").asText() : null;
+                String status = txNode.has("status") ? txNode.get("status").asText() : null;
+                String reference = txNode.has("reference") ? txNode.get("reference").asText() : null;
+                Long amountInCents = txNode.has("amount_in_cents") ? txNode.get("amount_in_cents").asLong() : 0;
+                String finalizedAt = txNode.has("finalized_at") ? txNode.get("finalized_at").asText() : null;
+                String customerEmail = null;
+                if (txNode.has("customer_email") && !txNode.get("customer_email").isNull()) {
+                    customerEmail = txNode.get("customer_email").asText();
+                }
+                
+                detalle.put("transactionId", transactionId);
+                detalle.put("status", status);
+                detalle.put("reference", reference);
+                detalle.put("monto", amountInCents / 100.0);
+                detalle.put("email", customerEmail);
+                
+                // Solo procesar transacciones APPROVED
+                if (!"APPROVED".equals(status)) {
+                    detalle.put("resultado", "NO_ES_APPROVED");
+                    detalles.add(detalle);
+                    continue;
+                }
+                
+                // Verificar si ya existe un pago con este transactionId
+                Optional<Pago> existente = pagoRepository.findByWompiTransactionId(transactionId);
+                if (existente.isPresent()) {
+                    detalle.put("resultado", "YA_VINCULADO");
+                    detalle.put("idPago", existente.get().getIdPago());
+                    yaExistentes++;
+                    detalles.add(detalle);
+                    continue;
+                }
+                
+                // Buscar pago pendiente por referencia
+                Pago pagoPendiente = pagosPorReferencia.get(reference);
+                
+                if (pagoPendiente != null) {
+                    try {
+                        // Convertir fecha
+                        LocalDateTime fechaColombia = convertirFechaWompiAColombia(finalizedAt);
+                        
+                        // Actualizar el pago
+                        pagoPendiente.setEstadoPago(Pago.EstadoPago.PAGADO);
+                        pagoPendiente.setWompiTransactionId(transactionId);
+                        pagoPendiente.setFechaPago(fechaColombia.toLocalDate());
+                        pagoPendiente.setHoraPago(fechaColombia.toLocalTime());
+                        pagoRepository.save(pagoPendiente);
+                        
+                        // Actualizar estudiante
+                        if (pagoPendiente.getEstudiante() != null) {
+                            Estudiante estudiante = pagoPendiente.getEstudiante();
+                            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                            estudianteRepository.save(estudiante);
+                            detalle.put("estudianteActualizado", estudiante.getNombreCompleto());
+                        }
+                        
+                        detalle.put("resultado", "VINCULADO_Y_ACTUALIZADO");
+                        detalle.put("idPago", pagoPendiente.getIdPago());
+                        vinculados++;
+                        
+                        log.info("✅ Transacción {} vinculada con pago {} - Estudiante actualizado", 
+                            transactionId, pagoPendiente.getIdPago());
+                        
+                    } catch (Exception e) {
+                        detalle.put("resultado", "ERROR");
+                        detalle.put("error", e.getMessage());
+                        errores++;
+                    }
+                } else {
+                    // No hay pago pendiente con esa referencia, pero podríamos crear uno
+                    // si la referencia tiene el formato PAY-{idEstudiante}-...
+                    if (reference != null && reference.startsWith("PAY-")) {
+                        try {
+                            Pago nuevoPago = createPaymentFromWebhookInternal(
+                                reference, transactionId, amountInCents, finalizedAt, customerEmail);
+                            
+                            if (nuevoPago != null) {
+                                detalle.put("resultado", "CREADO_NUEVO_PAGO");
+                                detalle.put("idPago", nuevoPago.getIdPago());
+                                if (nuevoPago.getEstudiante() != null) {
+                                    detalle.put("estudianteActualizado", nuevoPago.getEstudiante().getNombreCompleto());
+                                }
+                                vinculados++;
+                            } else {
+                                detalle.put("resultado", "NO_SE_PUDO_CREAR");
+                                sinMatchPendiente++;
+                            }
+                        } catch (Exception e) {
+                            detalle.put("resultado", "ERROR_CREANDO");
+                            detalle.put("error", e.getMessage());
+                            errores++;
+                        }
+                    } else {
+                        detalle.put("resultado", "SIN_PAGO_PENDIENTE_MATCHING");
+                        sinMatchPendiente++;
+                    }
+                }
+                
+                detalles.add(detalle);
+            }
+            
+            log.info("✅ Sincronización desde Wompi completada: {} consultadas, {} vinculadas, {} ya existentes, {} sin match, {} errores",
+                transaccionesConsultadas, vinculados, yaExistentes, sinMatchPendiente, errores);
+                
+        } catch (Exception e) {
+            log.error("❌ Error sincronizando desde transacciones de Wompi: {}", e.getMessage(), e);
+            resultado.put("error", e.getMessage());
+        }
+        
+        resultado.put("transaccionesConsultadas", transaccionesConsultadas);
+        resultado.put("vinculados", vinculados);
+        resultado.put("yaExistentes", yaExistentes);
+        resultado.put("sinMatchPendiente", sinMatchPendiente);
+        resultado.put("errores", errores);
+        resultado.put("detalles", detalles);
+        
+        return resultado;
+    }
+    
+    /**
+     * Método interno para crear pago desde transacción de Wompi
+     */
+    private Pago createPaymentFromWebhookInternal(String reference, String transactionId, 
+            Long amountInCents, String finalizedAt, String customerEmail) {
+        try {
+            LocalDateTime fechaColombia = convertirFechaWompiAColombia(finalizedAt);
+            BigDecimal monto = amountInCents != null ? BigDecimal.valueOf(amountInCents / 100.0) : BigDecimal.ZERO;
+            
+            Estudiante estudiante = null;
+            String mesPagado = null;
+            
+            // Extraer ID del estudiante de la referencia
+            if (reference != null && reference.startsWith("PAY-")) {
+                try {
+                    String[] parts = reference.split("-");
+                    if (parts.length >= 3) {
+                        Integer idEstudiante = Integer.parseInt(parts[1]);
+                        
+                        if (parts.length >= 5 && parts[2].length() == 4) {
+                            mesPagado = parts[2] + "-" + parts[3];
+                        } else if (parts.length >= 4) {
+                            mesPagado = parts[2];
+                        }
+                        
+                        Optional<Estudiante> estudianteOpt = estudianteRepository.findById(idEstudiante);
+                        if (estudianteOpt.isPresent()) {
+                            estudiante = estudianteOpt.get();
+                        }
+                    }
+                } catch (NumberFormatException e) {
+                    log.warn("No se pudo extraer ID del estudiante de: {}", reference);
+                }
+            }
+            
+            // Fallback: buscar por email
+            if (estudiante == null && customerEmail != null && !customerEmail.isEmpty()) {
+                Optional<Estudiante> estudianteOpt = estudianteRepository.findByCorreoEstudiante(customerEmail);
+                if (estudianteOpt.isPresent()) {
+                    estudiante = estudianteOpt.get();
+                    if (mesPagado == null) {
+                        mesPagado = fechaColombia.getYear() + "-" + String.format("%02d", fechaColombia.getMonthValue());
+                    }
+                }
+            }
+            
+            if (estudiante == null) {
+                return null;
+            }
+            
+            // Verificar si ya existe
+            Optional<Pago> existingPago = pagoRepository.findByWompiTransactionId(transactionId);
+            if (existingPago.isPresent()) {
+                return existingPago.get();
+            }
+            
+            // Crear el pago
+            Pago pago = new Pago();
+            pago.setEstudiante(estudiante);
+            pago.setValor(monto);
+            pago.setReferenciaPago(reference);
+            pago.setWompiTransactionId(transactionId);
+            pago.setMesPagado(mesPagado != null ? mesPagado : fechaColombia.getYear() + "-" + String.format("%02d", fechaColombia.getMonthValue()));
+            pago.setMetodoPago(Pago.MetodoPago.ONLINE);
+            pago.setEstadoPago(Pago.EstadoPago.PAGADO);
+            pago.setFechaPago(fechaColombia.toLocalDate());
+            pago.setHoraPago(fechaColombia.toLocalTime());
+            
+            Pago pagoGuardado = pagoRepository.save(pago);
+            
+            // Actualizar estudiante
+            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+            estudianteRepository.save(estudiante);
+            
+            log.info("✅ Pago creado desde transacción Wompi - ID: {}, Estudiante: {}", 
+                pagoGuardado.getIdPago(), estudiante.getNombreCompleto());
+            
+            return pagoGuardado;
+            
+        } catch (Exception e) {
+            log.error("Error creando pago desde transacción: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+    
+    /**
      * Procesa el webhook de Wompi
      */
     public boolean processWebhook(WompiWebhookEvent event, String receivedChecksum) {

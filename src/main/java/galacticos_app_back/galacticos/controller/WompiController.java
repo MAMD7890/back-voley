@@ -399,4 +399,49 @@ public class WompiController {
             return ResponseEntity.internalServerError().body(error);
         }
     }
+    
+    /**
+     * Sincroniza pagos consultando las transacciones DIRECTAMENTE desde Wompi.
+     * Este es el método más efectivo cuando los pagos quedaron sin wompiTransactionId.
+     * 
+     * Proceso:
+     * 1. Consulta las últimas 100 transacciones de Wompi
+     * 2. Para cada transacción APPROVED, busca si hay un pago pendiente con esa referencia
+     * 3. Si encuentra match: vincula el transactionId y actualiza estados
+     * 4. Si no hay match pero la referencia es PAY-{id}-...: crea el pago automáticamente
+     * 
+     * USAR ESTE ENDPOINT cuando los pagos no tienen transactionId
+     * 
+     * POST /api/wompi/sync-from-wompi
+     * 
+     * Response:
+     * {
+     *   "transaccionesConsultadas": 100,
+     *   "vinculados": 5,
+     *   "yaExistentes": 10,
+     *   "sinMatchPendiente": 80,
+     *   "errores": 0,
+     *   "detalles": [...]
+     * }
+     */
+    @PostMapping("/sync-from-wompi")
+    public ResponseEntity<Map<String, Object>> sincronizarDesdeWompi() {
+        log.info("🔄 Iniciando sincronización desde transacciones de Wompi");
+        
+        try {
+            Map<String, Object> resultado = wompiService.sincronizarDesdeTransaccionesWompi();
+            
+            log.info("✅ Sincronización desde Wompi completada - Vinculados: {}, Errores: {}", 
+                resultado.get("vinculados"), resultado.get("errores"));
+            
+            return ResponseEntity.ok(resultado);
+            
+        } catch (Exception e) {
+            log.error("❌ Error sincronizando desde Wompi: {}", e.getMessage(), e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", "Error: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(error);
+        }
+    }
 }
