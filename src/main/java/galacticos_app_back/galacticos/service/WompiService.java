@@ -695,9 +695,20 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             headers.setBearerAuth(wompiConfig.getPrivateKey());
             HttpEntity<String> entity = new HttpEntity<>(headers);
             
-            // Consultar últimas 100 transacciones
+            // Calcular fechas: desde hace 60 días hasta hoy
+            LocalDate hoy = LocalDate.now(ZONA_COLOMBIA);
+            LocalDate desde = hoy.minusDays(60);
+            String fromDate = desde.toString(); // formato: 2026-01-02
+            String untilDate = hoy.toString();  // formato: 2026-03-02
+            
+            // Consultar transacciones con los parámetros requeridos por Wompi
+            String url = wompiConfig.getApiUrl() + "/transactions?from_date=" + fromDate 
+                    + "&until_date=" + untilDate + "&page=1&page_size=200";
+            
+            log.info("📋 Consultando Wompi: {}", url);
+            
             ResponseEntity<String> response = restTemplate.exchange(
-                    wompiConfig.getApiUrl() + "/transactions?per_page=100",
+                    url,
                     HttpMethod.GET,
                     entity,
                     String.class
