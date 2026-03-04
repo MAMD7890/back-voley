@@ -247,6 +247,35 @@ public class EstudianteController {
         }
     }
     
+    /**
+     * Generar usuario para un estudiante existente que no tiene acceso al sistema
+     * POST /api/estudiantes/{id}/generar-usuario
+     * 
+     * Crea un usuario con:
+     * - Email: correoEstudiante
+     * - Password: numeroDocumento (temporal, debe cambiar)
+     * - Rol: STUDENT
+     */
+    @PostMapping("/{id}/generar-usuario")
+    public ResponseEntity<?> generarUsuario(@PathVariable Integer id) {
+        try {
+            Map<String, Object> resultado = estudianteService.generarUsuarioParaEstudiante(id);
+            if ((Boolean) resultado.get("success")) {
+                return ResponseEntity.ok(resultado);
+            } else {
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(resultado);
+            }
+        } catch (RuntimeException e) {
+            String errorMessage = e.getMessage();
+            if (errorMessage.contains("no encontrado")) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("error", errorMessage, "success", false));
+            }
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", errorMessage, "success", false));
+        }
+    }
+    
     // ================== ENDPOINTS PARA GESTIÓN DE ESTADO DE PAGO ==================
     
     /**

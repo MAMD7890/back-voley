@@ -188,6 +188,75 @@ public class EstudianteService {
     }
     
     /**
+     * Genera un usuario para un estudiante existente que no tiene acceso al sistema.
+     * Útil para estudiantes creados sin usuario asociado.
+     * 
+     * @param idEstudiante ID del estudiante
+     * @return Mapa con credenciales generadas (email, password temporal)
+     */
+    @Transactional
+    public Map<String, Object> generarUsuarioParaEstudiante(Integer idEstudiante) {
+        Map<String, Object> resultado = new HashMap<>();
+        
+        // 1. Buscar el estudiante
+        Estudiante estudiante = estudianteRepository.findById(idEstudiante)
+            .orElseThrow(() -> new RuntimeException("Estudiante no encontrado con ID: " + idEstudiante));
+        
+        System.out.println("=== GENERANDO USUARIO PARA ESTUDIANTE EXISTENTE ===");
+        System.out.println("ID Estudiante: " + idEstudiante);
+        System.out.println("Nombre: " + estudiante.getNombreCompleto());
+        System.out.println("Email: " + estudiante.getCorreoEstudiante());
+        System.out.println("Documento: " + estudiante.getNumeroDocumento());
+        
+        // 2. Verificar si ya tiene usuario
+        Optional<Usuario> usuarioExistente = usuarioRepository.findByEmail(estudiante.getCorreoEstudiante());
+        if (usuarioExistente.isPresent()) {
+            System.out.println("El estudiante ya tiene un usuario asociado con email: " + estudiante.getCorreoEstudiante());
+            resultado.put("success", false);
+            resultado.put("message", "El estudiante ya tiene un usuario asociado");
+            resultado.put("email", estudiante.getCorreoEstudiante());
+            return resultado;
+        }
+        
+        // 3. Validar que tenga correo
+        if (estudiante.getCorreoEstudiante() == null || estudiante.getCorreoEstudiante().trim().isEmpty()) {
+            throw new RuntimeException("El estudiante no tiene correo electrónico registrado. No se puede crear usuario.");
+        }
+        
+        // 4. Validar que tenga documento (será la contraseña temporal)
+        if (estudiante.getNumeroDocumento() == null || estudiante.getNumeroDocumento().trim().isEmpty()) {
+            throw new RuntimeException("El estudiante no tiene número de documento. No se puede crear usuario.");
+        }
+        
+        // 5. Crear el usuario
+        Usuario nuevoUsuario = new Usuario();
+        nuevoUsuario.setNombre(estudiante.getNombreCompleto());
+        nuevoUsuario.setEmail(estudiante.getCorreoEstudiante().trim().toLowerCase());
+        nuevoUsuario.setPassword(passwordEncoder.encode(estudiante.getNumeroDocumento()));
+        nuevoUsuario.setNumeroDocumento(estudiante.getNumeroDocumento());
+        nuevoUsuario.setEstado(true);
+        nuevoUsuario.setRequiereChangioPassword(true); // Debe cambiar contraseña
+        nuevoUsuario.setEstudiante(estudiante);
+        
+        // 6. Asignar rol STUDENT
+        galacticos_app_back.galacticos.entity.Rol studentRol = rolRepository.findByNombre("STUDENT")
+            .orElseThrow(() -> new RuntimeException("Rol STUDENT no encontrado"));
+        nuevoUsuario.setRol(studentRol);
+        
+        usuarioRepository.save(nuevoUsuario);
+        System.out.println("✅ Usuario creado exitosamente para: " + estudiante.getNombreCompleto());
+        
+        resultado.put("success", true);
+        resultado.put("message", "Usuario creado exitosamente");
+        resultado.put("email", estudiante.getCorreoEstudiante().trim().toLowerCase());
+        resultado.put("passwordTemporal", estudiante.getNumeroDocumento());
+        resultado.put("estudianteId", idEstudiante);
+        resultado.put("estudianteNombre", estudiante.getNombreCompleto());
+        
+        return resultado;
+    }
+    
+    /**
      * Importa masivamente estudiantes desde un archivo Excel
      * Crea automáticamente usuarios con credenciales (email y password)
      * @param dtos Lista de DTOs extraídos del Excel
