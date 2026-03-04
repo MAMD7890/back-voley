@@ -26,11 +26,13 @@ public class EstadoPagoSchedulerService {
      * Sincroniza pagos con Wompi cada 5 minutos.
      * Consulta las transacciones aprobadas en Wompi y actualiza los estudiantes
      * cuyo pago no se registró correctamente.
+     * También sincroniza estados de estudiantes con pagos confirmados.
      */
     @Scheduled(fixedRate = 300000) // 5 minutos = 300,000 ms
     public void sincronizarPagosWompi() {
         log.info("🔄 === INICIO: Sincronización automática con Wompi ===");
         try {
+            // 1. Sincronizar transacciones desde Wompi
             Map<String, Object> resultado = wompiService.sincronizarDesdeTransaccionesWompi();
             
             int vinculados = (int) resultado.getOrDefault("vinculados", 0);
@@ -42,6 +44,16 @@ public class EstadoPagoSchedulerService {
                     vinculados, yaExistentes, errores);
             } else {
                 log.debug("Sincronización con Wompi: sin nuevos pagos para vincular");
+            }
+            
+            // 2. Sincronizar estados de estudiantes con pagos confirmados
+            Map<String, Object> resultadoEstados = wompiService.sincronizarEstadosConPagos();
+            int actualizados = (int) resultadoEstados.getOrDefault("estudiantesActualizadosAAlDia", 0);
+            int membresias = (int) resultadoEstados.getOrDefault("membresiasActivadas", 0);
+            
+            if (actualizados > 0 || membresias > 0) {
+                log.info("✅ Estados sincronizados: {} estudiantes actualizados a AL_DIA, {} membresías activadas", 
+                    actualizados, membresias);
             }
             
         } catch (Exception e) {

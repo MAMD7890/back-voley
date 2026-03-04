@@ -487,4 +487,45 @@ public class WompiController {
             return ResponseEntity.internalServerError().body(error);
         }
     }
+    
+    /**
+     * Sincroniza los estados de estudiantes con sus pagos confirmados.
+     * Si un estudiante tiene pagos PAGADOS pero su estado no es AL_DIA,
+     * lo actualiza a AL_DIA y activa su membresía.
+     * 
+     * Útil para corregir inconsistencias donde el pago se procesó correctamente
+     * pero el estado del estudiante no se actualizó.
+     * 
+     * POST /api/wompi/sincronizar-estados
+     * 
+     * Response:
+     * {
+     *   "estudiantesActualizadosAAlDia": 3,
+     *   "membresiasActivadas": 5,
+     *   "yaAlDia": 42,
+     *   "sinPagosRecientes": 10,
+     *   "errores": 0,
+     *   "detalles": [...]
+     * }
+     */
+    @PostMapping("/sincronizar-estados")
+    public ResponseEntity<Map<String, Object>> sincronizarEstadosConPagos() {
+        log.info("🔄 Iniciando sincronización de estados con pagos confirmados");
+        
+        try {
+            Map<String, Object> resultado = wompiService.sincronizarEstadosConPagos();
+            
+            log.info("✅ Sincronización completada - Actualizados a AL_DIA: {}, Membresías activadas: {}", 
+                resultado.get("estudiantesActualizadosAAlDia"), resultado.get("membresiasActivadas"));
+            
+            return ResponseEntity.ok(resultado);
+            
+        } catch (Exception e) {
+            log.error("❌ Error sincronizando estados: {}", e.getMessage(), e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", "Error: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(error);
+        }
+    }
 }

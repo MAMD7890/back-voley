@@ -794,6 +794,131 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
     }
     
     /**
+     * Sincroniza los estados de los estudiantes con sus pagos confirmados.
+     * Si un estudiante tiene un pago PAGADO con transactionId pero NO está AL_DIA,
+     * lo actualiza a AL_DIA y activa su membresía.
+     * 
+     * Este método corrige inconsistencias donde el pago se procesó pero el estado
+     * del estudiante no se actualizó correctamente.
+     */
+    public Map<String, Object> sincronizarEstadosConPagos() {
+        Map<String, Object> resultado = new HashMap<>();
+        List<Map<String, Object>> detalles = new ArrayList<>();
+        
+        int estudiantesActualizados = 0;
+        int membresiasActivadas = 0;
+        int yaAlDia = 0;
+        int sinPagosConfirmados = 0;
+        int errores = 0;
+        
+        try {
+            log.info("🔄 ===== SINCRONIZANDO ESTADOS CON PAGOS CONFIRMADOS =====");
+            
+            // Obtener todos los estudiantes activos que NO están AL_DIA
+            List<Estudiante> estudiantesNoAlDia = estudianteRepository.findByEstado(true).stream()
+                    .filter(e -> e.getEstadoPago() != Estudiante.EstadoPago.AL_DIA)
+                    .toList();
+            
+            log.info("📋 Estudiantes activos no AL_DIA: {}", estudiantesNoAlDia.size());
+            
+            // Calcular el mes actual y el anterior para considerar pagos recientes
+            LocalDate hoy = LocalDate.now(ZONA_COLOMBIA);
+            String mesActual = hoy.getYear() + "-" + String.format("%02d", hoy.getMonthValue());
+            String mesAnterior = hoy.minusMonths(1).getYear() + "-" + String.format("%02d", hoy.minusMonths(1).getMonthValue());
+            
+            for (Estudiante estudiante : estudiantesNoAlDia) {
+                Map<String, Object> detalle = new HashMap<>();
+                detalle.put("idEstudiante", estudiante.getIdEstudiante());
+                detalle.put("nombre", estudiante.getNombreCompleto());
+                detalle.put("estadoAnterior", estudiante.getEstadoPago().name());
+                
+                try {
+                    // Buscar pagos PAGADOS con transactionId (confirmados por Wompi)
+                    List<Pago> pagosPagados = pagoRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante())
+                            .stream()
+                            .filter(p -> p.getEstadoPago() == Pago.EstadoPago.PAGADO)
+                            .filter(p -> p.getWompiTransactionId() != null && !p.getWompiTransactionId().isEmpty())
+                            .toList();
+                    
+                    detalle.put("pagosConfirmados", pagosPagados.size());
+                    
+                    if (!pagosPagados.isEmpty()) {
+                        // Verificar si tiene pago reciente (mes actual o anterior)
+                        boolean tienePagoReciente = pagosPagados.stream()
+                                .anyMatch(p -> mesActual.equals(p.getMesPagado()) || 
+                                              mesAnterior.equals(p.getMesPagado()) ||
+                                              (p.getFechaPago() != null && p.getFechaPago().isAfter(hoy.minusDays(35))));
+                        
+                        if (tienePagoReciente) {
+                            // Actualizar estado a AL_DIA
+                            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                            estudianteRepository.save(estudiante);
+                            estudiantesActualizados++;
+                            
+                            // Activar membresía
+                            activarMembresiaEstudiante(estudiante);
+                            membresiasActivadas++;
+                            
+                            detalle.put("estadoNuevo", "AL_DIA");
+                            detalle.put("membresiaActivada", true);
+                            detalle.put("accion", "ACTUALIZADO_A_AL_DIA");
+                            
+                            log.info("✅ Estudiante {} actualizado: {} -> AL_DIA, membresía activada", 
+                                estudiante.getNombreCompleto(), detalle.get("estadoAnterior"));
+                        } else {
+                            detalle.put("accion", "PAGO_NO_RECIENTE");
+                            sinPagosConfirmados++;
+                        }
+                    } else {
+                        detalle.put("accion", "SIN_PAGOS_CONFIRMADOS");
+                        sinPagosConfirmados++;
+                    }
+                    
+                } catch (Exception e) {
+                    detalle.put("error", e.getMessage());
+                    detalle.put("accion", "ERROR");
+                    errores++;
+                    log.error("❌ Error procesando estudiante {}: {}", estudiante.getIdEstudiante(), e.getMessage());
+                }
+                
+                detalles.add(detalle);
+            }
+            
+            // También revisar estudiantes AL_DIA para asegurar que la membresía esté activa
+            List<Estudiante> estudiantesAlDia = estudianteRepository.findByEstado(true).stream()
+                    .filter(e -> e.getEstadoPago() == Estudiante.EstadoPago.AL_DIA)
+                    .toList();
+            
+            for (Estudiante estudiante : estudiantesAlDia) {
+                yaAlDia++;
+                // Verificar si tiene membresía activa, si no, activarla
+                List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
+                if (membresias.isEmpty() || !membresias.get(0).getEstado()) {
+                    activarMembresiaEstudiante(estudiante);
+                    membresiasActivadas++;
+                    log.info("✅ Membresía activada para estudiante AL_DIA: {}", estudiante.getNombreCompleto());
+                }
+            }
+            
+            log.info("✅ Sincronización completada: {} actualizados a AL_DIA, {} membresías activadas, {} ya AL_DIA, {} sin pagos recientes, {} errores",
+                estudiantesActualizados, membresiasActivadas, yaAlDia, sinPagosConfirmados, errores);
+                
+        } catch (Exception e) {
+            log.error("❌ Error en sincronización de estados: {}", e.getMessage(), e);
+            resultado.put("error", e.getMessage());
+        }
+        
+        resultado.put("estudiantesActualizadosAAlDia", estudiantesActualizados);
+        resultado.put("membresiasActivadas", membresiasActivadas);
+        resultado.put("yaAlDia", yaAlDia);
+        resultado.put("sinPagosRecientes", sinPagosConfirmados);
+        resultado.put("errores", errores);
+        resultado.put("detalles", detalles);
+        
+        return resultado;
+    }
+    
+    /**
      * Consulta las transacciones recientes de Wompi y las vincula con pagos pendientes.
      * Este método es útil cuando el webhook no llegó y los pagos quedaron sin wompiTransactionId.
      * 
