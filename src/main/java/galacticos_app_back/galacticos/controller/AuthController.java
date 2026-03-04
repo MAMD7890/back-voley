@@ -227,4 +227,30 @@ public class AuthController {
                     .body(MessageResponse.error(e.getMessage()));
         }
     }
+
+    /**
+     * Activar cuenta de estudiante existente usando su número de documento.
+     * Este endpoint es PÚBLICO - permite a estudiantes que ya fueron registrados
+     * por un administrador activar su cuenta para poder iniciar sesión.
+     * La contraseña será el número de documento del estudiante.
+     * 
+     * POST /api/auth/activar-estudiante
+     * Body: { "numeroDocumento": "1096807790" }
+     */
+    @PostMapping("/activar-estudiante")
+    public ResponseEntity<?> activarEstudiante(@RequestBody java.util.Map<String, String> request) {
+        try {
+            String numeroDocumento = request.get("numeroDocumento");
+            if (numeroDocumento == null || numeroDocumento.trim().isEmpty()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(MessageResponse.error("El número de documento es obligatorio"));
+            }
+            
+            AuthResponse response = authService.activarEstudiante(numeroDocumento.trim());
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(MessageResponse.error(e.getMessage()));
+        }
+    }
 }

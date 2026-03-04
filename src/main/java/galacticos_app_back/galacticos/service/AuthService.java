@@ -4,6 +4,8 @@ import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.AuthenticationManager;
+import galacticos_app_back.galacticos.entity.Estudiante;
+import galacticos_app_back.galacticos.repository.EstudianteRepository;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -44,6 +46,9 @@ public class AuthService {
 
     @Autowired
     private FileStorageService fileStorageService;
+
+    @Autowired
+    private EstudianteRepository estudianteRepository;
 
     @Transactional
     public AuthResponse login(LoginRequest loginRequest) {
@@ -312,6 +317,68 @@ public class AuthService {
         // Actualizar la contraseña
         usuario.setPassword(passwordEncoder.encode(changePasswordRequest.getNewPassword()));
         usuarioRepository.save(usuario);
+    }
+
+    /**
+     * Activa el acceso de un estudiante existente creando su usuario en el sistema.
+     * El estudiante debe existir en la tabla Estudiante.
+     * La contraseña será su número de documento.
+     */
+    @Transactional
+    public AuthResponse activarEstudiante(String numeroDocumento) {
+        System.out.println("🎓 ===== ACTIVANDO ESTUDIANTE =====");
+        System.out.println("📄 Número de documento: " + numeroDocumento);
+        
+        // Buscar estudiante por número de documento
+        Estudiante estudiante = estudianteRepository.findByNumeroDocumento(numeroDocumento)
+                .orElseThrow(() -> new RuntimeException("No se encontró ningún estudiante con el documento: " + numeroDocumento));
+        
+        System.out.println("✅ Estudiante encontrado: " + estudiante.getNombreCompleto());
+        System.out.println("   - Email: " + estudiante.getCorreoEstudiante());
+        
+        // Verificar que tenga correo
+        if (estudiante.getCorreoEstudiante() == null || estudiante.getCorreoEstudiante().trim().isEmpty()) {
+            throw new RuntimeException("El estudiante no tiene correo registrado. Por favor, contacte al administrador.");
+        }
+        
+        String emailNormalizado = estudiante.getCorreoEstudiante().toLowerCase().trim();
+        
+        // Verificar si ya existe un usuario con ese email
+        Optional<Usuario> usuarioExistente = usuarioRepository.findByEmail(emailNormalizado);
+        if (usuarioExistente.isPresent()) {
+            System.out.println("⚠️ El usuario ya existe, procediendo con login...");
+            // Si ya existe, simplemente hacer login
+            Usuario usuario = usuarioExistente.get();
+            String accessToken = jwtTokenProvider.generateToken(emailNormalizado);
+            String refreshToken = jwtTokenProvider.generateRefreshToken(emailNormalizado);
+            return buildAuthResponse(usuario, accessToken, refreshToken);
+        }
+        
+        // Crear nuevo usuario para el estudiante
+        System.out.println("📝 Creando nuevo usuario para el estudiante...");
+        Usuario nuevoUsuario = new Usuario();
+        nuevoUsuario.setNombre(estudiante.getNombreCompleto());
+        nuevoUsuario.setEmail(emailNormalizado);
+        nuevoUsuario.setPassword(passwordEncoder.encode(numeroDocumento)); // Contraseña = número de documento
+        nuevoUsuario.setTipoDocumento(estudiante.getTipoDocumento() != null ? estudiante.getTipoDocumento().name() : null);
+        nuevoUsuario.setNumeroDocumento(numeroDocumento);
+        nuevoUsuario.setTelefono(estudiante.getCelularEstudiante());
+        nuevoUsuario.setEstado(true);
+        
+        // Asignar rol STUDENT
+        Rol studentRol = rolRepository.findByNombre("STUDENT")
+                .orElseThrow(() -> new RuntimeException("Rol STUDENT no encontrado"));
+        nuevoUsuario.setRol(studentRol);
+        
+        nuevoUsuario = usuarioRepository.save(nuevoUsuario);
+        System.out.println("✅ Usuario creado con ID: " + nuevoUsuario.getIdUsuario());
+        
+        // Generar tokens
+        String accessToken = jwtTokenProvider.generateToken(emailNormalizado);
+        String refreshToken = jwtTokenProvider.generateRefreshToken(emailNormalizado);
+        
+        System.out.println("✅ Tokens generados exitosamente");
+        return buildAuthResponse(nuevoUsuario, accessToken, refreshToken);
     }
 
     private AuthResponse buildAuthResponse(Usuario usuario, String accessToken, String refreshToken) {
