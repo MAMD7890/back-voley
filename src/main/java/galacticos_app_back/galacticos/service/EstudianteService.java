@@ -818,67 +818,73 @@ public class EstudianteService {
             estudiante.setEstadoPago(estudianteActualizado.getEstadoPago());
         }
         
-        // ============ ACTUALIZAR USUARIO ASOCIADO SI CAMBIARON CREDENCIALES ============
-        // Las credenciales son: username = correoEstudiante, password = numeroDocumento
+        // ============ ACTUALIZAR EMAIL Y CREDENCIALES ============
         // Normalizar emails a minúsculas para comparación
         String emailNuevoNormalizado = estudianteActualizado.getCorreoEstudiante() != null ? 
             estudianteActualizado.getCorreoEstudiante().toLowerCase().trim() : "";
         String emailAntiguoNormalizado = emailAntiguo != null ? emailAntiguo.toLowerCase().trim() : "";
         
-        boolean cambioEmail = !emailAntiguoNormalizado.equals(emailNuevoNormalizado);
-        boolean cambioDocumento = !documentoAntiguo.equals(estudianteActualizado.getNumeroDocumento());
-        
-        // Actualizar el correo del estudiante normalizado
+        // Siempre actualizar el correo del estudiante a minúsculas
         estudiante.setCorreoEstudiante(emailNuevoNormalizado);
         
-        if (cambioEmail || cambioDocumento) {
-            System.out.println("\n⚠️  CAMBIO DETECTADO EN CREDENCIALES");
-            System.out.println("   Cambio email: " + cambioEmail);
-            System.out.println("   Cambio documento: " + cambioDocumento);
+        // Detectar si es un cambio real de email (no solo mayúsculas/minúsculas)
+        boolean cambioEmailReal = !emailAntiguoNormalizado.equals(emailNuevoNormalizado);
+        boolean cambioDocumento = documentoAntiguo != null && 
+            !documentoAntiguo.equals(estudianteActualizado.getNumeroDocumento());
+        
+        // Buscar el usuario del estudiante actual
+        Optional<Usuario> usuarioOpt = usuarioRepository.findByEmail(emailAntiguo);
+        
+        if (cambioEmailReal) {
+            System.out.println("\n⚠️  CAMBIO REAL DE EMAIL DETECTADO");
+            System.out.println("   Email anterior: " + emailAntiguo);
+            System.out.println("   Email nuevo: " + emailNuevoNormalizado);
             
-            // Buscar el usuario por email antiguo (ya que el email es el username)
-            Optional<Usuario> usuarioOpt = usuarioRepository.findByEmail(emailAntiguo);
-            
-            if (usuarioOpt.isPresent()) {
-                Usuario usuario = usuarioOpt.get();
-                System.out.println("\n✅ Usuario encontrado - ID: " + usuario.getIdUsuario());
-                
-                // Actualizar email si cambió
-                if (cambioEmail) {
-                    // Verificar que el nuevo email no esté en uso por OTRO usuario
-                    Optional<Usuario> usuarioConNuevoEmail = usuarioRepository.findByEmail(emailNuevoNormalizado);
-                    if (usuarioConNuevoEmail.isPresent() && 
-                        !usuarioConNuevoEmail.get().getIdUsuario().equals(usuario.getIdUsuario())) {
-                        throw new RuntimeException("El correo " + emailNuevoNormalizado + 
-                                                 " ya está registrado por otro usuario");
-                    }
-                    
-                    usuario.setEmail(emailNuevoNormalizado);
-                    usuario.setUsername(emailNuevoNormalizado);
-                    System.out.println("   ✓ Email actualizado: " + emailAntiguo + " → " + emailNuevoNormalizado);
+            // Verificar que el nuevo email no esté en uso por OTRO usuario
+            Optional<Usuario> usuarioConNuevoEmail = usuarioRepository.findByEmail(emailNuevoNormalizado);
+            if (usuarioConNuevoEmail.isPresent()) {
+                // Si el usuario encontrado NO es del estudiante actual, es duplicado
+                if (usuarioOpt.isEmpty() || 
+                    !usuarioConNuevoEmail.get().getIdUsuario().equals(usuarioOpt.get().getIdUsuario())) {
+                    throw new RuntimeException("El correo " + emailNuevoNormalizado + 
+                                             " ya está registrado por otro usuario");
                 }
-                
-                // Actualizar contraseña si cambió el documento
-                if (cambioDocumento) {
-                    String newPassword = passwordEncoder.encode(estudianteActualizado.getNumeroDocumento());
-                    usuario.setPassword(newPassword);
-                    usuario.setRequiereChangioPassword(true); // Marcar para cambio en próximo login
-                    System.out.println("   ✓ Contraseña actualizada (basada en nuevo documento)");
-                    System.out.println("   ✓ Usuario deberá cambiar contraseña en próximo login");
-                }
-                
-                // Actualizar nombre si cambió
-                usuario.setNombre(estudianteActualizado.getNombreCompleto());
-                usuario.setTipoDocumento(estudianteActualizado.getTipoDocumento() != null ? 
-                        estudianteActualizado.getTipoDocumento().name() : null);
-                usuario.setNumeroDocumento(estudianteActualizado.getNumeroDocumento());
-                
-                // Guardar cambios del usuario
-                usuarioRepository.save(usuario);
-                System.out.println("   ✓ Usuario actualizado en BD");
-            } else {
-                System.out.println("⚠️  ADVERTENCIA: No se encontró usuario con email: " + emailAntiguo);
             }
+        }
+        
+        // Actualizar usuario si existe
+        if (usuarioOpt.isPresent()) {
+            Usuario usuario = usuarioOpt.get();
+            System.out.println("\n✅ Usuario encontrado - ID: " + usuario.getIdUsuario());
+            
+            // Siempre actualizar email a versión normalizada (minúsculas)
+            usuario.setEmail(emailNuevoNormalizado);
+            usuario.setUsername(emailNuevoNormalizado);
+            
+            if (cambioEmailReal) {
+                System.out.println("   ✓ Email actualizado: " + emailAntiguo + " → " + emailNuevoNormalizado);
+            } else {
+                System.out.println("   ✓ Email normalizado a minúsculas");
+            }
+            
+            // Actualizar contraseña si cambió el documento
+            if (cambioDocumento) {
+                String newPassword = passwordEncoder.encode(estudianteActualizado.getNumeroDocumento());
+                usuario.setPassword(newPassword);
+                usuario.setRequiereChangioPassword(true);
+                System.out.println("   ✓ Contraseña actualizada (basada en nuevo documento)");
+            }
+            
+            // Actualizar nombre y documento
+            usuario.setNombre(estudianteActualizado.getNombreCompleto());
+            usuario.setTipoDocumento(estudianteActualizado.getTipoDocumento() != null ? 
+                    estudianteActualizado.getTipoDocumento().name() : null);
+            usuario.setNumeroDocumento(estudianteActualizado.getNumeroDocumento());
+            
+            usuarioRepository.save(usuario);
+            System.out.println("   ✓ Usuario guardado");
+        } else {
+            System.out.println("⚠️  ADVERTENCIA: No se encontró usuario con email: " + emailAntiguo);
         }
         
         // ============ GUARDAR EN LA BD ============
@@ -889,17 +895,6 @@ public class EstudianteService {
         System.out.println("Nuevo documento: " + estudianteGuardado.getNumeroDocumento());
         System.out.println("Nuevo email: " + estudianteGuardado.getCorreoEstudiante());
         System.out.println("Nueva sede: " + (estudianteGuardado.getSede() != null ? estudianteGuardado.getSede().getNombre() : "Sin sede"));
-        
-        if (cambioEmail || cambioDocumento) {
-            System.out.println("\n✅ Usuario asociado también fue sincronizado");
-            if (cambioEmail) {
-                System.out.println("   Email usuario: " + estudianteGuardado.getCorreoEstudiante());
-            }
-            if (cambioDocumento) {
-                System.out.println("   Contraseña: Actualizada (basada en nuevo documento)");
-                System.out.println("   ⚠️  Usuario deberá cambiar contraseña en próximo login");
-            }
-        }
         
         System.out.println("=== FIN DE ACTUALIZACIÓN ===");
         
@@ -1072,32 +1067,47 @@ public class EstudianteService {
         }
         if (dto.getCorreoEstudiante() != null) {
             String nuevoCorreo = dto.getCorreoEstudiante().toLowerCase().trim();
-            String correoActual = estudiante.getCorreoEstudiante() != null ? 
-                estudiante.getCorreoEstudiante().toLowerCase().trim() : "";
+            // Guardar el correo ORIGINAL del estudiante (como está en BD, puede tener mayúsculas)
+            String correoOriginalEnBD = estudiante.getCorreoEstudiante();
+            String correoActualNormalizado = correoOriginalEnBD != null ? 
+                correoOriginalEnBD.toLowerCase().trim() : "";
             
-            // Buscar si existe un usuario con el nuevo correo
-            Optional<Usuario> usuarioConNuevoCorreo = usuarioRepository.findByEmail(nuevoCorreo);
-            
-            // Si existe, verificar que sea el mismo usuario del estudiante actual (no otro)
-            if (usuarioConNuevoCorreo.isPresent()) {
-                Usuario usuarioExistente = usuarioConNuevoCorreo.get();
-                // Buscar el usuario actual del estudiante
-                Optional<Usuario> usuarioActual = usuarioRepository.findByEmail(estudiante.getCorreoEstudiante());
+            // Si el correo realmente no cambió (ignorando mayúsculas), permitir actualización
+            if (nuevoCorreo.equals(correoActualNormalizado)) {
+                // Solo normalizar a minúsculas, no hay conflicto real
+                // Actualizar también en usuario si existe (buscar con el email ORIGINAL de la BD)
+                usuarioRepository.findByEmail(correoOriginalEnBD)
+                        .ifPresent(usuario -> {
+                            usuario.setEmail(nuevoCorreo);
+                            usuarioRepository.save(usuario);
+                            System.out.println("✓ Usuario actualizado: email normalizado a minúsculas");
+                        });
+                estudiante.setCorreoEstudiante(nuevoCorreo);
+            } else {
+                // El correo SÍ cambió, verificar que no esté en uso por OTRO usuario
+                Optional<Usuario> usuarioConNuevoCorreo = usuarioRepository.findByEmail(nuevoCorreo);
                 
-                // Si el usuario encontrado NO es el mismo que el del estudiante actual, es duplicado
-                if (usuarioActual.isEmpty() || !usuarioExistente.getIdUsuario().equals(usuarioActual.get().getIdUsuario())) {
-                    throw new RuntimeException("El correo ya está registrado por otro usuario");
+                if (usuarioConNuevoCorreo.isPresent()) {
+                    // Buscar el usuario del estudiante actual (si tiene)
+                    Optional<Usuario> usuarioDelEstudiante = usuarioRepository.findByEmail(correoOriginalEnBD);
+                    
+                    // Si el usuario encontrado NO es del estudiante actual, es duplicado
+                    if (usuarioDelEstudiante.isEmpty() || 
+                        !usuarioConNuevoCorreo.get().getIdUsuario().equals(usuarioDelEstudiante.get().getIdUsuario())) {
+                        throw new RuntimeException("El correo ya está registrado por otro usuario");
+                    }
                 }
+                
+                // Actualizar el email del usuario asociado si existe
+                usuarioRepository.findByEmail(correoOriginalEnBD)
+                        .ifPresent(usuario -> {
+                            usuario.setEmail(nuevoCorreo);
+                            usuarioRepository.save(usuario);
+                            System.out.println("✓ Usuario actualizado: nuevo email " + nuevoCorreo);
+                        });
+                
+                estudiante.setCorreoEstudiante(nuevoCorreo);
             }
-            
-            // Actualizar el email del usuario asociado (normalizado a minúsculas)
-            usuarioRepository.findByEmail(estudiante.getCorreoEstudiante())
-                    .ifPresent(usuario -> {
-                        usuario.setEmail(nuevoCorreo);
-                        usuarioRepository.save(usuario);
-                    });
-            
-            estudiante.setCorreoEstudiante(nuevoCorreo);
         }
         if (dto.getDireccionResidencia() != null) {
             estudiante.setDireccionResidencia(dto.getDireccionResidencia());

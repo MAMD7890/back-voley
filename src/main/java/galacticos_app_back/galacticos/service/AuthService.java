@@ -49,15 +49,19 @@ public class AuthService {
     public AuthResponse login(LoginRequest loginRequest) {
         try {
             System.out.println("🔐 ===== INICIANDO LOGIN =====");
+            // Normalizar email a minúsculas para búsqueda consistente
+            String emailNormalizado = loginRequest.getEmail() != null ? 
+                loginRequest.getEmail().toLowerCase().trim() : "";
             System.out.println("📧 Email ingresado: " + loginRequest.getEmail());
+            System.out.println("📧 Email normalizado: " + emailNormalizado);
             System.out.println("🔑 Password ingresado (longitud): " + (loginRequest.getPassword() != null ? loginRequest.getPassword().length() : "NULL"));
             String pwd = loginRequest.getPassword();
             System.out.println("🔑 Password ingresado (primeros 5 chars): " + (pwd != null && pwd.length() > 5 ? pwd.substring(0, 5) + "..." : "VERY_SHORT"));
             
-            // Buscar usuario en BD
-            Usuario usuarioEnBD = usuarioRepository.findByEmail(loginRequest.getEmail()).orElse(null);
+            // Buscar usuario en BD con email normalizado
+            Usuario usuarioEnBD = usuarioRepository.findByEmail(emailNormalizado).orElse(null);
             if (usuarioEnBD == null) {
-                System.out.println("❌ Usuario NO encontrado en BD con email: " + loginRequest.getEmail());
+                System.out.println("❌ Usuario NO encontrado en BD con email: " + emailNormalizado);
                 throw new RuntimeException("Usuario no encontrado");
             }
             
@@ -69,11 +73,11 @@ public class AuthService {
             System.out.println("   - Password en BD (hasheado, primeros 20 chars): " + (usuarioEnBD.getPassword() != null ? usuarioEnBD.getPassword().substring(0, Math.min(20, usuarioEnBD.getPassword().length())) : "NULL"));
             System.out.println("   - Rol: " + (usuarioEnBD.getRol() != null ? usuarioEnBD.getRol().getNombre() : "NULL"));
             
-            // Intentar autenticación
+            // Intentar autenticación con email normalizado
             System.out.println("🔄 Intentando autenticación con AuthenticationManager...");
             Authentication authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(
-                            loginRequest.getEmail(),
+                            emailNormalizado,
                             loginRequest.getPassword()
                     )
             );
@@ -81,8 +85,8 @@ public class AuthService {
             System.out.println("✅ Autenticación exitosa!");
             SecurityContextHolder.getContext().setAuthentication(authentication);
 
-            String accessToken = jwtTokenProvider.generateToken(loginRequest.getEmail());
-            String refreshToken = jwtTokenProvider.generateRefreshToken(loginRequest.getEmail());
+            String accessToken = jwtTokenProvider.generateToken(emailNormalizado);
+            String refreshToken = jwtTokenProvider.generateRefreshToken(emailNormalizado);
 
             System.out.println("✅ Tokens generados exitosamente");
             return buildAuthResponse(usuarioEnBD, accessToken, refreshToken);
