@@ -1063,19 +1063,25 @@ public class EstudianteService {
             estudiante.setWhatsappEstudiante(dto.getWhatsappEstudiante());
         }
         if (dto.getCorreoEstudiante() != null) {
-            // Verificar que el nuevo correo no esté en uso
-            if (!dto.getCorreoEstudiante().equals(estudiante.getCorreoEstudiante())) {
-                if (usuarioRepository.findByEmail(dto.getCorreoEstudiante()).isPresent()) {
+            String nuevoCorreo = dto.getCorreoEstudiante().toLowerCase().trim();
+            String correoActual = estudiante.getCorreoEstudiante() != null ? 
+                estudiante.getCorreoEstudiante().toLowerCase().trim() : "";
+            
+            // Solo validar duplicados si el correo es realmente diferente (ignorando case)
+            if (!nuevoCorreo.equals(correoActual)) {
+                if (usuarioRepository.findByEmail(nuevoCorreo).isPresent()) {
                     throw new RuntimeException("El correo ya está registrado por otro usuario");
                 }
-                // Actualizar también el email del usuario asociado
-                usuarioRepository.findByEmail(estudiante.getCorreoEstudiante())
-                        .ifPresent(usuario -> {
-                            usuario.setEmail(dto.getCorreoEstudiante());
-                            usuarioRepository.save(usuario);
-                        });
             }
-            estudiante.setCorreoEstudiante(dto.getCorreoEstudiante());
+            
+            // Siempre actualizar el email del usuario asociado (normalizado a minúsculas)
+            usuarioRepository.findByEmail(estudiante.getCorreoEstudiante())
+                    .ifPresent(usuario -> {
+                        usuario.setEmail(nuevoCorreo);
+                        usuarioRepository.save(usuario);
+                    });
+            
+            estudiante.setCorreoEstudiante(nuevoCorreo);
         }
         if (dto.getDireccionResidencia() != null) {
             estudiante.setDireccionResidencia(dto.getDireccionResidencia());
