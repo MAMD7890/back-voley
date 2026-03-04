@@ -1067,14 +1067,22 @@ public class EstudianteService {
             String correoActual = estudiante.getCorreoEstudiante() != null ? 
                 estudiante.getCorreoEstudiante().toLowerCase().trim() : "";
             
-            // Solo validar duplicados si el correo es realmente diferente (ignorando case)
-            if (!nuevoCorreo.equals(correoActual)) {
-                if (usuarioRepository.findByEmail(nuevoCorreo).isPresent()) {
+            // Buscar si existe un usuario con el nuevo correo
+            Optional<Usuario> usuarioConNuevoCorreo = usuarioRepository.findByEmail(nuevoCorreo);
+            
+            // Si existe, verificar que sea el mismo usuario del estudiante actual (no otro)
+            if (usuarioConNuevoCorreo.isPresent()) {
+                Usuario usuarioExistente = usuarioConNuevoCorreo.get();
+                // Buscar el usuario actual del estudiante
+                Optional<Usuario> usuarioActual = usuarioRepository.findByEmail(estudiante.getCorreoEstudiante());
+                
+                // Si el usuario encontrado NO es el mismo que el del estudiante actual, es duplicado
+                if (usuarioActual.isEmpty() || !usuarioExistente.getIdUsuario().equals(usuarioActual.get().getIdUsuario())) {
                     throw new RuntimeException("El correo ya está registrado por otro usuario");
                 }
             }
             
-            // Siempre actualizar el email del usuario asociado (normalizado a minúsculas)
+            // Actualizar el email del usuario asociado (normalizado a minúsculas)
             usuarioRepository.findByEmail(estudiante.getCorreoEstudiante())
                     .ifPresent(usuario -> {
                         usuario.setEmail(nuevoCorreo);
