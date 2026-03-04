@@ -3,8 +3,10 @@ package galacticos_app_back.galacticos.service;
 import galacticos_app_back.galacticos.config.WompiConfig;
 import galacticos_app_back.galacticos.dto.wompi.*;
 import galacticos_app_back.galacticos.entity.Estudiante;
+import galacticos_app_back.galacticos.entity.Membresia;
 import galacticos_app_back.galacticos.entity.Pago;
 import galacticos_app_back.galacticos.repository.EstudianteRepository;
+import galacticos_app_back.galacticos.repository.MembresiaRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -46,6 +48,7 @@ public class WompiService {
     private final RestTemplate restTemplate;
     private final PagoRepository pagoRepository;
     private final EstudianteRepository estudianteRepository;
+    private final MembresiaRepository membresiaRepository;
     private final ObjectMapper objectMapper;
     
     /**
@@ -401,7 +404,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         Estudiante estudiante = pago.getEstudiante();
                         estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                         estudianteRepository.save(estudiante);
-                        log.info("✅ Estudiante {} actualizado a AL_DIA", estudiante.getIdEstudiante());
+                        activarMembresiaEstudiante(estudiante);
+                        log.info("✅ Estudiante {} actualizado a AL_DIA y membresía activada", estudiante.getIdEstudiante());
                     }
                     
                     pagoRepository.save(pago);
@@ -599,7 +603,9 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                                     Estudiante estudiante = pago.getEstudiante();
                                     estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                                     estudianteRepository.save(estudiante);
+                                    activarMembresiaEstudiante(estudiante);
                                     detallePago.put("estudianteActualizado", true);
+                                    detallePago.put("membresiaActivada", true);
                                 }
                                 
                                 detallePago.put("estado", "ACTUALIZADO_A_PAGADO");
@@ -918,7 +924,9 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                             Estudiante estudiante = pagoPendiente.getEstudiante();
                             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                             estudianteRepository.save(estudiante);
+                            activarMembresiaEstudiante(estudiante);
                             detalle.put("estudianteActualizado", estudiante.getNombreCompleto());
+                            detalle.put("membresiaActivada", true);
                         }
                         
                         detalle.put("resultado", "VINCULADO_Y_ACTUALIZADO");
@@ -1054,11 +1062,12 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             
             Pago pagoGuardado = pagoRepository.save(pago);
             
-            // Actualizar estudiante
+            // Actualizar estudiante y activar membresía
             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
             estudianteRepository.save(estudiante);
+            activarMembresiaEstudiante(estudiante);
             
-            log.info("✅ Pago creado desde transacción Wompi - ID: {}, Estudiante: {}", 
+            log.info("✅ Pago creado desde transacción Wompi - ID: {}, Estudiante: {}, Membresía activada", 
                 pagoGuardado.getIdPago(), estudiante.getNombreCompleto());
             
             return pagoGuardado;
@@ -1143,7 +1152,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                                 Estudiante estudiante = pago.getEstudiante();
                                 estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                                 estudianteRepository.save(estudiante);
-                                log.info("✅ Estado de pago del estudiante {} actualizado a AL_DIA", 
+                                activarMembresiaEstudiante(estudiante);
+                                log.info("✅ Estado de pago del estudiante {} actualizado a AL_DIA y membresía activada", 
                                     estudiante.getIdEstudiante());
                             }
                             
@@ -1435,8 +1445,9 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         if (estudiante.getEstadoPago() != Estudiante.EstadoPago.AL_DIA) {
                             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                             estudianteRepository.save(estudiante);
+                            activarMembresiaEstudiante(estudiante);
                             estudianteActualizado = true;
-                            log.info("✅ Estudiante {} actualizado a AL_DIA", estudiante.getIdEstudiante());
+                            log.info("✅ Estudiante {} actualizado a AL_DIA y membresía activada", estudiante.getIdEstudiante());
                         }
                         
                         responseBuilder
@@ -1713,11 +1724,12 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             
             Pago pagoGuardado = pagoRepository.save(pago);
             
-            // Actualizar estudiante
+            // Actualizar estudiante y activar membresía
             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
             estudianteRepository.save(estudiante);
+            activarMembresiaEstudiante(estudiante);
             
-            log.info("✅ Pago creado automáticamente - ID: {}, Estudiante: {}, Referencia: {}", 
+            log.info("✅ Pago creado automáticamente - ID: {}, Estudiante: {}, Referencia: {}, Membresía activada", 
                     pagoGuardado.getIdPago(), idEstudiante, reference);
             
             return pagoGuardado;
@@ -1827,11 +1839,12 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             
             Pago pagoGuardado = pagoRepository.save(pago);
             
-            // Actualizar estado del estudiante a AL_DIA
+            // Actualizar estado del estudiante a AL_DIA y activar membresía
             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
             estudianteRepository.save(estudiante);
+            activarMembresiaEstudiante(estudiante);
             
-            log.info("✅ Pago creado automáticamente desde webhook - ID Pago: {}, Estudiante: {} ({}), Monto: {}, Mes: {}", 
+            log.info("✅ Pago creado automáticamente desde webhook - ID Pago: {}, Estudiante: {} ({}), Monto: {}, Mes: {}, Membresía activada", 
                 pagoGuardado.getIdPago(), 
                 estudiante.getIdEstudiante(), 
                 estudiante.getNombreCompleto(),
@@ -1857,6 +1870,55 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             case PENDIENTE: return "#ffc107";
             case COMPROMISO_PAGO: return "#17a2b8";
             default: return "#6c757d";
+        }
+    }
+    
+    /**
+     * Activa la membresía del estudiante cuando se confirma un pago.
+     * Si no tiene membresía, crea una nueva con duración de 30 días.
+     * Si ya tiene membresía inactiva, la reactiva y extiende 30 días desde hoy.
+     */
+    public void activarMembresiaEstudiante(Estudiante estudiante) {
+        if (estudiante == null) {
+            log.warn("⚠️ No se puede activar membresía: estudiante es null");
+            return;
+        }
+        
+        try {
+            List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
+            
+            LocalDate hoy = LocalDate.now(ZONA_COLOMBIA);
+            LocalDate fechaFin = hoy.plusDays(30); // Membresía de 30 días
+            
+            if (membresias != null && !membresias.isEmpty()) {
+                // Ya tiene membresía, activarla y extender
+                Membresia membresia = membresias.get(0);
+                membresia.setEstado(true);
+                
+                // Si la membresía actual está vencida o por vencer, extender desde hoy
+                if (membresia.getFechaFin() == null || membresia.getFechaFin().isBefore(hoy.plusDays(5))) {
+                    membresia.setFechaInicio(hoy);
+                    membresia.setFechaFin(fechaFin);
+                }
+                
+                membresiaRepository.save(membresia);
+                log.info("✅ Membresía ACTIVADA para estudiante {} - Válida hasta: {}", 
+                    estudiante.getNombreCompleto(), fechaFin);
+            } else {
+                // No tiene membresía, crear una nueva
+                Membresia nuevaMembresia = new Membresia();
+                nuevaMembresia.setEstudiante(estudiante);
+                nuevaMembresia.setFechaInicio(hoy);
+                nuevaMembresia.setFechaFin(fechaFin);
+                nuevaMembresia.setEstado(true);
+                
+                membresiaRepository.save(nuevaMembresia);
+                log.info("✅ Nueva membresía CREADA para estudiante {} - Válida hasta: {}", 
+                    estudiante.getNombreCompleto(), fechaFin);
+            }
+        } catch (Exception e) {
+            log.error("❌ Error activando membresía para estudiante {}: {}", 
+                estudiante.getIdEstudiante(), e.getMessage(), e);
         }
     }
 }
