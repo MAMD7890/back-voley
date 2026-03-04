@@ -97,7 +97,8 @@ public class JwtTokenProvider {
 
     public boolean validateToken(String token, UserDetails userDetails) {
         final String username = extractUsername(token);
-        return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
+        // Comparación case-insensitive para evitar problemas con mayúsculas/minúsculas en emails
+        return (username.equalsIgnoreCase(userDetails.getUsername()) && !isTokenExpired(token));
     }
 
     public boolean validateToken(String token) {

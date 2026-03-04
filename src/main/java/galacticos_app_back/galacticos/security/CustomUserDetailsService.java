@@ -38,8 +38,9 @@ public class CustomUserDetailsService implements UserDetailsService {
                 new SimpleGrantedAuthority("ROLE_" + (usuario.getRol() != null ? usuario.getRol().getNombre().toUpperCase() : "USER"))
         );
 
+        // Usar email normalizado (minúsculas) para consistencia con tokens JWT
         return new User(
-                usuario.getEmail(),
+                usuario.getEmail().toLowerCase().trim(),
                 usuario.getPassword(),
                 usuario.getEstado(),
                 true,
