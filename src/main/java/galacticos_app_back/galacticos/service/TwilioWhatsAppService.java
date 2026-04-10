@@ -183,12 +183,9 @@ public class TwilioWhatsAppService {
                 "Hola *%s* 👋\n\n" +
                 "Tu membresía lleva *5 días vencida* (desde el %s).\n\n" +
                 "⚠️ *Tu lugar en el equipo está en riesgo.*\n\n" +
-                "Sabemos que pueden surgir imprevistos. Si tienes alguna dificultad para pagar:\n\n" +
-                "📞 *Comunícate con nosotros* y buscaremos una solución juntos:\n" +
-                "   • Planes de pago flexibles\n" +
-                "   • Opciones de financiamiento\n\n" +
-                "💪 No dejes que esto detenga tu progreso.\n\n" +
-                "¡Te esperamos de vuelta! 🏐",
+                "📞 *Por favor comunícate con el profe encargado* para establecer un *compromiso de pago* y poder continuar entrenando.\n\n" +
+                "🤝 Queremos ayudarte a seguir siendo parte del equipo. No dejes pasar más tiempo.\n\n" +
+                "💪 ¡Te esperamos de vuelta en la cancha! 🏐",
                 nombreFormateado, fechaVencimiento
             );
             

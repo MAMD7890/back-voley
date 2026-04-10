@@ -3,10 +3,12 @@ package galacticos_app_back.galacticos.service;
 import galacticos_app_back.galacticos.dto.WhatsAppMessageResult;
 import galacticos_app_back.galacticos.entity.Estudiante;
 import galacticos_app_back.galacticos.entity.Membresia;
+import galacticos_app_back.galacticos.entity.Pago;
 import galacticos_app_back.galacticos.entity.RecordatorioPago;
 import galacticos_app_back.galacticos.entity.RecordatorioPago.EstadoEnvio;
 import galacticos_app_back.galacticos.entity.RecordatorioPago.TipoRecordatorio;
 import galacticos_app_back.galacticos.repository.MembresiaRepository;
+import galacticos_app_back.galacticos.repository.PagoRepository;
 import galacticos_app_back.galacticos.repository.RecordatorioPagoRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,11 +29,9 @@ import java.util.Map;
  * 
  * Este servicio se ejecuta diariamente y procesa las membresías que requieren
  * notificación según las reglas de negocio establecidas:
- * - 5 días antes del vencimiento
- * - 3 días antes del vencimiento
- * - El día del vencimiento
- * - 3 días después del vencimiento
- * - 5 días después del vencimiento
+ * - 5 días antes del vencimiento: Recordatorio preventivo
+ * - 3 días después del vencimiento: Aviso de mora
+ * - 5 días después del vencimiento: Mensaje de compromiso de pago (contactar profe encargado)
  * 
  * @author Galacticos App
  * @version 1.0
@@ -43,6 +43,7 @@ public class RecordatorioSchedulerService {
 
     private final MembresiaRepository membresiaRepository;
     private final RecordatorioPagoRepository recordatorioPagoRepository;
+    private final PagoRepository pagoRepository;
     private final TwilioWhatsAppService twilioWhatsAppService;
 
     @Value("${recordatorio.max-reintentos:3}")
@@ -54,7 +55,8 @@ public class RecordatorioSchedulerService {
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     // Días en los que se envían recordatorios (relativos a fecha de vencimiento)
-    private static final int[] DIAS_RECORDATORIO = {-5, -3, 0, 3, 5};
+    // -5: cinco días antes del pago, 0: día del vencimiento, 3: tres días después, 5: compromiso de pago
+    private static final int[] DIAS_RECORDATORIO = {-5, 0, 3, 5};
 
     /**
      * Tarea programada que se ejecuta diariamente a las 8:00 AM.
@@ -163,31 +165,59 @@ public class RecordatorioSchedulerService {
             return;
         }
 
+        // Verificar si el estudiante ya pagó el período actual (no enviar recordatorio si ya pagó)
+        if (estudianteYaPagoMesActual(estudiante)) {
+            log.debug("   ⏭️ Estudiante ya pagó el mes actual - Estudiante: {} (ID: {})", 
+                    estudiante.getNombreCompleto(), estudiante.getIdEstudiante());
+            estadisticas.merge("omitidas", 1, Integer::sum);
+            return;
+        }
+
         // Enviar el recordatorio
         enviarRecordatorio(membresia, estudiante, tipoRecordatorio, numeroWhatsApp, estadisticas);
     }
 
     /**
      * Obtiene el número de WhatsApp disponible para enviar recordatorios de pago.
-     * Prioridad: Teléfono tutor (responsable del pago) > WhatsApp estudiante > Celular estudiante
-     * 
-     * Para recordatorios de pago, el tutor es el principal responsable,
-     * por lo que se prioriza su número de contacto.
+     * Prioridad: WhatsApp estudiante > Celular estudiante > Teléfono tutor
      */
     private String obtenerNumeroWhatsApp(Estudiante estudiante) {
-        // Prioridad 1: Teléfono del tutor (responsable del pago de la membresía)
-        if (estudiante.getTelefonoTutor() != null && !estudiante.getTelefonoTutor().isBlank()) {
-            return estudiante.getTelefonoTutor();
-        }
-        // Prioridad 2: WhatsApp del estudiante
+        // Prioridad 1: WhatsApp del estudiante (campo whatsappEstudiante)
         if (estudiante.getWhatsappEstudiante() != null && !estudiante.getWhatsappEstudiante().isBlank()) {
             return estudiante.getWhatsappEstudiante();
         }
-        // Prioridad 3: Celular del estudiante
+        // Prioridad 2: Celular del estudiante
         if (estudiante.getCelularEstudiante() != null && !estudiante.getCelularEstudiante().isBlank()) {
             return estudiante.getCelularEstudiante();
         }
+        // Prioridad 3: Teléfono del tutor (respaldo)
+        if (estudiante.getTelefonoTutor() != null && !estudiante.getTelefonoTutor().isBlank()) {
+            return estudiante.getTelefonoTutor();
+        }
         return null;
+    }
+
+    /**
+     * Verifica si el estudiante ya realizó el pago del mes actual.
+     * Si ya pagó, no se deben enviar recordatorios.
+     */
+    private boolean estudianteYaPagoMesActual(Estudiante estudiante) {
+        LocalDate hoy = LocalDate.now();
+        String mesActual = hoy.getMonth().getDisplayName(java.time.format.TextStyle.FULL, new java.util.Locale("es", "CO")).toUpperCase();
+        
+        java.util.Optional<Pago> pagoMes = pagoRepository.findPagoAprobadoByEstudianteAndMes(
+                estudiante.getIdEstudiante(), mesActual);
+        
+        if (pagoMes.isPresent()) {
+            return true;
+        }
+        
+        // También verificar con el formato MES-AÑO por si se usa otro formato
+        String mesAnio = mesActual + "-" + hoy.getYear();
+        java.util.Optional<Pago> pagoMesAnio = pagoRepository.findPagoAprobadoByEstudianteAndMes(
+                estudiante.getIdEstudiante(), mesAnio);
+        
+        return pagoMesAnio.isPresent();
     }
 
     /**
