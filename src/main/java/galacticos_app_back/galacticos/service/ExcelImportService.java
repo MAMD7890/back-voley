@@ -473,7 +473,15 @@ public class ExcelImportService {
                 obtenerValor.apply("clubesanteriores") != null ? obtenerValor.apply("clubesanteriores") :
                 obtenerValor.apply("clubes_anteriores") != null ? obtenerValor.apply("clubes_anteriores") : null
             );
-            
+
+            // Estado de pago (opcional: permite importar estudiantes ya en mora)
+            dto.setEstadoPago(
+                obtenerValor.apply("estado pago") != null ? obtenerValor.apply("estado pago") :
+                obtenerValor.apply("estadopago") != null ? obtenerValor.apply("estadopago") :
+                obtenerValor.apply("estado_pago") != null ? obtenerValor.apply("estado_pago") :
+                obtenerValor.apply("estado de pago") != null ? obtenerValor.apply("estado de pago") : null
+            );
+
             return dto;
         } catch (Exception e) {
             logger.error("Error al mapear fila " + numeroFila + ": " + e.getMessage(), e);
@@ -718,7 +726,8 @@ public class ExcelImportService {
                 "Posicion Preferida",
                 "Dominancia",
                 "Nivel Actual",
-                "Clubes Anteriores"
+                "Clubes Anteriores",
+                "Estado Pago"
             };
             
             // Crear fila de headers
@@ -749,7 +758,7 @@ public class ExcelImportService {
                     "Ninguna", "Ninguna", "Ninguno", "No", "15",
                     "Carlos García", "3101234567", "Abuelo", "Jubilado", "carlos@example.com",
                     "No", "No", "Ninguna", "No", "Ninguna", "Católica",
-                    "Intermedio", "Futbol", "Diestro", "Intermedio", "Club Deportivo"
+                    "Intermedio", "Futbol", "Diestro", "Intermedio", "Club Deportivo", "PENDIENTE"
                 },
                 {
                     "María López Rodríguez", "Cédula", "9876543210", "15/03/2002",
@@ -760,7 +769,7 @@ public class ExcelImportService {
                     "Polen", "Ninguna", "Ninguno", "No", "10",
                     "Rosa López", "3108765432", "Abuela", "Ama de casa", "rosa@example.com",
                     "No", "No", "Ninguna", "No", "Ninguna", "Protestante",
-                    "Avanzado", "Natación", "Zurda", "Avanzado", "Club Acuático"
+                    "Avanzado", "Natación", "Zurda", "Avanzado", "Club Acuático", "EN_MORA"
                 },
                 {
                     "Carlos Gómez Martínez", "Cédula", "5555555555", "10/07/2001",
@@ -771,7 +780,7 @@ public class ExcelImportService {
                     "Maní", "Asma", "Inhalador", "No", "20",
                     "Jorge Gómez", "3106666666", "Tío", "Abogado", "jorge@example.com",
                     "No", "No", "Ninguna", "No", "Afrodescendiente", "Evangélica",
-                    "Principiante", "Tenis", "Diestro", "Principiante", "Club de Tenis"
+                    "Principiante", "Tenis", "Diestro", "Principiante", "Club de Tenis", "PENDIENTE"
                 }
             };
             

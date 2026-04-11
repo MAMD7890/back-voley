@@ -321,11 +321,10 @@ public class EstudianteService {
                     continue;
                 }
                 
-                // Crear el estudiante
+                // Crear el estudiante (estadoPago viene del DTO o PENDIENTE por defecto)
                 Estudiante estudiante = dtoAEstudiante(dto, sede);
-                estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
                 Estudiante estudianteGuardado = estudianteRepository.save(estudiante);
-                
+
                 // Crear membresía
                 Membresia membresia = new Membresia();
                 membresia.setEstudiante(estudianteGuardado);
@@ -688,10 +687,22 @@ public class EstudianteService {
         
         // Estado por defecto
         estudiante.setEstado(true);
-        
+
+        // Estado de pago: usar el del CSV si se especificó, o PENDIENTE por defecto
+        try {
+            if (dto.getEstadoPago() != null && !dto.getEstadoPago().trim().isEmpty()) {
+                String estadoNormalizado = dto.getEstadoPago().trim().toUpperCase().replace(" ", "_");
+                estudiante.setEstadoPago(Estudiante.EstadoPago.valueOf(estadoNormalizado));
+            } else {
+                estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
+            }
+        } catch (Exception e) {
+            estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
+        }
+
         return estudiante;
     }
-    
+
     /**
      * Importa estudiantes desde un archivo Excel
      */
@@ -1547,7 +1558,6 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                 // ============ 1. CREAR ESTUDIANTE ============
                 System.out.println("\n1️⃣ Creando Estudiante...");
                 Estudiante estudiante = dtoAEstudiante(dto, sede);
-                estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
                 Estudiante estudianteGuardado = estudianteRepository.save(estudiante);
                 estudianteRepository.flush();  // ⚠️ FORZAR PERSISTENCIA INMEDIATA
                 System.out.println("✅ Estudiante guardado - ID: " + estudianteGuardado.getIdEstudiante());
@@ -1560,19 +1570,11 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                 System.out.println("✅ Verificación: Estudiante existe en BD");
                 
                 // ============ 2. GENERAR CREDENCIALES ============
+                // Usar el email y documento ya sanitizados del estudiante
                 System.out.println("\n2️⃣ Generando credenciales...");
-                
-                // Sanitizar email - si es inválido, generar uno automático
-                String emailSanitizado = sanitizarEmail(dto.getCorreoEstudiante());
-                if (emailSanitizado == null) {
-                    // Generar email automático: usuario_[documento]@galacticos.local
-                    emailSanitizado = "usuario_" + dto.getNumeroDocumento() + "@galacticos.local";
-                    System.out.println("⚠️ Email inválido o vacío, generando automático: " + emailSanitizado);
-                }
-                
+                String emailSanitizado = estudianteGuardado.getCorreoEstudiante();
+                String passwordGenerada = estudianteGuardado.getNumeroDocumento();
                 String username = emailSanitizado;
-                // Contraseña = Número de documento del estudiante
-                String passwordGenerada = dto.getNumeroDocumento();
                 System.out.println("✅ Usuario (email): " + username);
                 System.out.println("✅ Contraseña (documento): " + passwordGenerada);
                 
@@ -1594,8 +1596,8 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                 usuario.setEstado(true);
                 usuario.setRequiereChangioPassword(true);
                 usuario.setTipoDocumento(dto.getTipoDocumento());
-                usuario.setNumeroDocumento(dto.getNumeroDocumento());
-                
+                usuario.setNumeroDocumento(estudianteGuardado.getNumeroDocumento());
+
                 System.out.println("   - Intentando guardar usuario...");
                 Usuario usuarioGuardado = usuarioRepository.save(usuario);
                 System.out.println("   - Usuario guardado en memoria, ID: " + usuarioGuardado.getIdUsuario());
@@ -1717,7 +1719,7 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
             
             // ✅ PASO 1: TODAS LAS VALIDACIONES Y QUERIES ANTES DE GUARDAR NADA
             System.out.println("\n1️⃣ Realizando validaciones previas...");
-            
+
             // Validar DTO
             String erroresValidacion = validarDtoEstudiante(dto);
             if (!erroresValidacion.isEmpty()) {
@@ -1730,9 +1732,20 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                         .detalles(erroresValidacion)
                         .build();
             }
-            
-            // Verificar si el email ya existe
-            if (usuarioRepository.findByEmail(dto.getCorreoEstudiante()).isPresent()) {
+
+            // Pre-calcular el email real que se asignará al estudiante/usuario
+            // (misma lógica que dtoAEstudiante para garantizar consistencia)
+            String emailAvanzado = sanitizarEmailAvanzado(dto.getCorreoEstudiante());
+            String emailFinal;
+            if (emailAvanzado == null || emailAvanzado.trim().isEmpty()) {
+                String numDocLimpio = sanitizarNumeroDocumento(dto.getNumeroDocumento() != null ? dto.getNumeroDocumento() : "");
+                emailFinal = "usuario_" + numDocLimpio + "@galacticos.local";
+            } else {
+                emailFinal = emailAvanzado.trim().toLowerCase();
+            }
+
+            // Verificar si el email (ya sanitizado) ya existe
+            if (usuarioRepository.findByEmail(emailFinal).isPresent()) {
                 System.out.println("❌ Email ya registrado: " + dto.getCorreoEstudiante());
                 return ExcelImportResultado.builder()
                         .fila(numeroFila)
@@ -1764,28 +1777,23 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
             // ============ 1. CREAR ESTUDIANTE ============
             System.out.println("\n1️⃣ Creando Estudiante...");
             Estudiante estudiante = dtoAEstudiante(dto, sede);
-            estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
             Estudiante estudianteGuardado = estudianteRepository.save(estudiante);
             System.out.println("✅ Estudiante guardado - ID: " + estudianteGuardado.getIdEstudiante());
             
             // ============ 2. GENERAR CREDENCIALES ============
+            // Usar el email y documento ya sanitizados del estudiante para garantizar
+            // que usuario.email == estudiante.correoEstudiante y la contraseña coincida
             System.out.println("\n2️⃣ Generando credenciales...");
-            String emailSanitizado = sanitizarEmail(dto.getCorreoEstudiante());
-            if (emailSanitizado == null) {
-                emailSanitizado = "usuario_" + dto.getNumeroDocumento() + "@galacticos.local";
-                System.out.println("⚠️ Email inválido o vacío, generando automático: " + emailSanitizado);
-            }
-            
-            String username = emailSanitizado;
-            String passwordGenerada = dto.getNumeroDocumento();
-            System.out.println("✅ Usuario (email): " + username);
+            String emailSanitizado = estudianteGuardado.getCorreoEstudiante();
+            String passwordGenerada = estudianteGuardado.getNumeroDocumento();
+            System.out.println("✅ Usuario (email): " + emailSanitizado);
             System.out.println("✅ Contraseña (documento): " + passwordGenerada);
-            
+
             // ============ 3. CREAR USUARIO ============
             System.out.println("\n3️⃣ Creando Usuario...");
             Usuario usuario = new Usuario();
             usuario.setNombre(dto.getNombreCompleto());
-            usuario.setUsername(username);
+            usuario.setUsername(emailSanitizado);
             usuario.setEmail(emailSanitizado);
             usuario.setPassword(passwordEncoder.encode(passwordGenerada));
             usuario.setRol(rolEstudiante);
@@ -1793,8 +1801,8 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
             usuario.setEstado(true);
             usuario.setRequiereChangioPassword(true);
             usuario.setTipoDocumento(dto.getTipoDocumento());
-            usuario.setNumeroDocumento(dto.getNumeroDocumento());
-            
+            usuario.setNumeroDocumento(estudianteGuardado.getNumeroDocumento());
+
             Usuario usuarioGuardado = usuarioRepository.save(usuario);
             System.out.println("✅ Usuario guardado - ID: " + usuarioGuardado.getIdUsuario());
             System.out.println("   Email: " + usuarioGuardado.getEmail());
@@ -1819,7 +1827,7 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                     .fila(numeroFila)
                     .estudianteId(estudianteGuardado.getIdEstudiante())
                     .nombreEstudiante(dto.getNombreCompleto())
-                    .usuarioCreado(username)
+                    .usuarioCreado(emailSanitizado)
                     .passwordGenerada(passwordGenerada)
                     .estado("exitoso")
                     .mensaje("Estudiante y usuario creados correctamente")

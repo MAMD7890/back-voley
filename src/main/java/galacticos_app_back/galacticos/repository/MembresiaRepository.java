@@ -11,45 +11,57 @@ import java.util.List;
 
 @Repository
 public interface MembresiaRepository extends JpaRepository<Membresia, Integer> {
+
     List<Membresia> findByEstudianteIdEstudiante(Integer idEstudiante);
     List<Membresia> findByEquipoIdEquipo(Integer idEquipo);
     List<Membresia> findByEstado(Boolean estado);
-    List<Membresia> findByFechaInicioBetween(java.time.LocalDate desde, java.time.LocalDate hasta);
-    
+    List<Membresia> findByFechaInicioBetween(LocalDate desde, LocalDate hasta);
+
     /**
-     * Busca membresías activas cuya fecha de vencimiento (fechaFin) coincide con una fecha específica.
-     * Útil para encontrar membresías que vencen exactamente en una fecha dada.
+     * Busca membresías activas cuya fecha de vencimiento coincide con una fecha exacta.
      */
     @Query("SELECT m FROM Membresia m WHERE m.estado = true AND m.fechaFin = :fecha AND m.estudiante.estado = true")
     List<Membresia> findMembresiasActivasPorFechaVencimiento(@Param("fecha") LocalDate fecha);
-    
+
     /**
-     * Busca membresías con estudiantes activos que tienen fecha de vencimiento en un rango de fechas.
-     * Incluye membresías activas e inactivas (vencidas pero no renovadas).
+     * Busca membresías con fecha de vencimiento en un rango (para ventana de notificación).
      */
     @Query("SELECT m FROM Membresia m WHERE m.fechaFin BETWEEN :desde AND :hasta AND m.estudiante.estado = true")
     List<Membresia> findMembresiasPorRangoVencimiento(
-            @Param("desde") LocalDate desde, 
-            @Param("hasta") LocalDate hasta
-    );
-    
+            @Param("desde") LocalDate desde,
+            @Param("hasta") LocalDate hasta);
+
     /**
-     * Busca membresías vencidas (fecha fin pasada) con estudiantes activos.
-     * Útil para enviar recordatorios post-vencimiento.
-     */
-    @Query("SELECT m FROM Membresia m WHERE m.fechaFin < :fecha AND m.estudiante.estado = true")
-    List<Membresia> findMembresiasVencidas(@Param("fecha") LocalDate fecha);
-    
-    /**
-     * Busca todas las membresías que requieren notificación:
-     * - Estudiante activo
-     * - Fecha de vencimiento dentro del rango de notificación (-5 a +5 días)
+     * Busca membresías cuyo fechaFin ya pasó y el estudiante NO está en COMPROMISO_PAGO.
+     * Se usa para actualizar el estado a EN_MORA a medianoche.
+     * Incluye membresías con estado true o false (vencidas no renovadas).
      */
     @Query("SELECT m FROM Membresia m " +
-           "WHERE m.estudiante.estado = true " +
-           "AND m.fechaFin BETWEEN :fechaDesde AND :fechaHasta")
+           "WHERE m.fechaFin < :hoy " +
+           "AND m.estudiante.estado = true " +
+           "AND m.estudiante.estadoPago NOT IN ('EN_MORA', 'COMPROMISO_PAGO')" +
+           "ORDER BY m.estudiante.idEstudiante ASC")
+    List<Membresia> findMembresiasVencidasSinMora(@Param("hoy") LocalDate hoy);
+
+    /**
+     * Busca membresías en ventana de notificación pre-vencimiento (-5 a 0 días).
+     * La membresía debe estar activa.
+     */
+    @Query("SELECT m FROM Membresia m " +
+           "WHERE m.estado = true " +
+           "AND m.fechaFin BETWEEN :hoy AND :limite " +
+           "AND m.estudiante.estado = true")
+    List<Membresia> findMembresiasProximasAVencer(
+            @Param("hoy") LocalDate hoy,
+            @Param("limite") LocalDate limite);
+
+    /**
+     * Busca membresías vencidas en los últimos N días (para recordatorios post-vencimiento).
+     */
+    @Query("SELECT m FROM Membresia m " +
+           "WHERE m.fechaFin BETWEEN :desde AND :hasta " +
+           "AND m.estudiante.estado = true")
     List<Membresia> findMembresiasParaNotificacion(
-            @Param("fechaDesde") LocalDate fechaDesde, 
-            @Param("fechaHasta") LocalDate fechaHasta
-    );
+            @Param("desde") LocalDate desde,
+            @Param("hasta") LocalDate hasta);
 }

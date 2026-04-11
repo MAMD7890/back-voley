@@ -7,17 +7,19 @@ import galacticos_app_back.galacticos.config.TwilioConfig;
 import galacticos_app_back.galacticos.dto.WhatsAppMessageResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
  * Servicio para el envío de mensajes WhatsApp a través de Twilio.
- * 
- * Este servicio encapsula toda la lógica de comunicación con la API de Twilio,
- * proporcionando métodos de alto nivel para el envío de recordatorios de pago
- * de membresía para estudiantes de la escuela de voleibol.
- * 
- * @author Galacticos App
- * @version 2.0
+ *
+ * Mensajes implementados (relativos a fechaFin de membresía):
+ *   -5 días : Recordatorio preventivo temprano
+ *   -2 días : Recordatorio urgente pre-vencimiento
+ *    0 días : Último día, vence hoy
+ *   +1 día  : Primer aviso de mora
+ *   +2 días : Segundo aviso de mora
+ *   +3 días : Aviso final con link de pago urgente
  */
 @Service
 @Slf4j
@@ -26,12 +28,16 @@ public class TwilioWhatsAppService {
 
     private final TwilioConfig twilioConfig;
 
+    /** Link de pago configurable por variable de entorno */
+    @Value("${app.pago.link:https://galacticosvoleysm.com/pagar}")
+    private String linkPago;
+
+    // ─────────────────────────────────────────────────────
+    //  MÉTODOS PÚBLICOS
+    // ─────────────────────────────────────────────────────
+
     /**
-     * Envía un mensaje de WhatsApp a un número específico.
-     * 
-     * @param numeroDestino número de teléfono destino (será formateado automáticamente)
-     * @param mensaje contenido del mensaje a enviar
-     * @return resultado del envío con información del estado
+     * Envía un mensaje WhatsApp genérico.
      */
     public WhatsAppMessageResult enviarMensaje(String numeroDestino, String mensaje) {
         if (!twilioConfig.isEnabled()) {
@@ -44,9 +50,8 @@ public class TwilioWhatsAppService {
         }
 
         String numeroFormateado = twilioConfig.formatearNumeroWhatsApp(numeroDestino);
-        
         if (numeroFormateado == null) {
-            log.error("❌ Número de teléfono inválido: {}", numeroDestino);
+            log.error("❌ Número inválido: {}", numeroDestino);
             return WhatsAppMessageResult.builder()
                     .exito(false)
                     .error("Número de teléfono inválido o vacío")
@@ -55,15 +60,14 @@ public class TwilioWhatsAppService {
 
         try {
             log.info("📤 Enviando WhatsApp a {} desde {}", numeroFormateado, twilioConfig.getWhatsappFrom());
-            
+
             Message message = Message.creator(
                     new PhoneNumber(numeroFormateado),
                     new PhoneNumber(twilioConfig.getWhatsappFrom()),
                     mensaje
             ).create();
 
-            log.info("✅ Mensaje enviado exitosamente. SID: {}, Estado: {}", 
-                    message.getSid(), message.getStatus());
+            log.info("✅ Mensaje enviado. SID: {}, Estado: {}", message.getSid(), message.getStatus());
 
             return WhatsAppMessageResult.builder()
                     .exito(true)
@@ -73,15 +77,14 @@ public class TwilioWhatsAppService {
                     .build();
 
         } catch (ApiException e) {
-            log.error("❌ Error de API Twilio: Código {}, Mensaje: {}", e.getCode(), e.getMessage());
+            log.error("❌ Error API Twilio [{}}]: {}", e.getCode(), e.getMessage());
             return WhatsAppMessageResult.builder()
                     .exito(false)
                     .error("Error Twilio API: " + e.getMessage())
                     .codigoError(e.getCode())
                     .build();
-
         } catch (Exception e) {
-            log.error("❌ Error inesperado al enviar WhatsApp: {}", e.getMessage(), e);
+            log.error("❌ Error inesperado: {}", e.getMessage(), e);
             return WhatsAppMessageResult.builder()
                     .exito(false)
                     .error("Error inesperado: " + e.getMessage())
@@ -90,182 +93,32 @@ public class TwilioWhatsAppService {
     }
 
     /**
-     * Envía un recordatorio de pago de membresía personalizado.
-     * 
-     * @param numeroDestino número de teléfono destino
-     * @param nombreEstudiante nombre del estudiante
-     * @param fechaVencimiento fecha de vencimiento formateada
-     * @param diasRestantes días hasta/desde el vencimiento (negativo = faltan, positivo = pasados)
-     * @return resultado del envío
+     * Envía el recordatorio correspondiente según los días respecto al vencimiento.
+     *
+     * @param numeroDestino    teléfono del estudiante o tutor
+     * @param nombreEstudiante nombre completo del estudiante
+     * @param fechaVencimiento fecha de vencimiento formateada dd/MM/yyyy
+     * @param diasDiferencia   días respecto a fechaFin (-5,-2,0,+1,+2,+3)
      */
     public WhatsAppMessageResult enviarRecordatorioPago(
-            String numeroDestino, 
-            String nombreEstudiante, 
+            String numeroDestino,
+            String nombreEstudiante,
             String fechaVencimiento,
-            int diasRestantes) {
-        
-        String mensaje = construirMensajeRecordatorioPago(nombreEstudiante, fechaVencimiento, diasRestantes);
+            int diasDiferencia) {
+
+        String mensaje = construirMensaje(nombreEstudiante, fechaVencimiento, diasDiferencia);
         return enviarMensaje(numeroDestino, mensaje);
     }
 
     /**
-     * Construye el mensaje de recordatorio de pago de membresía según los días restantes.
-     * Mensajes personalizados para la Escuela de Voleibol Galácticos.
+     * Envía mensaje de bienvenida cuando se registra un estudiante.
      */
-    private String construirMensajeRecordatorioPago(String nombre, String fechaVencimiento, int dias) {
-        String nombreFormateado = capitalizarNombre(nombre);
-        
-        return switch (dias) {
-            case -5 -> String.format(
-                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
-                "━━━━━━━━━━━━━━━━━━━━━\n" +
-                "📅 *Recordatorio de Pago*\n\n" +
-                "Hola *%s* 👋\n\n" +
-                "Te recordamos que tu membresía vence en *5 días* (el %s).\n\n" +
-                "💰 Realiza tu pago a tiempo para continuar disfrutando de:\n" +
-                "   ✅ Entrenamientos regulares\n" +
-                "   ✅ Acceso a todas las instalaciones\n" +
-                "   ✅ Participación en torneos\n\n" +
-                "📲 Puedes pagar en línea o en nuestras oficinas.\n\n" +
-                "¡Gracias por ser parte de la familia Galácticos! 🌟",
-                nombreFormateado, fechaVencimiento
-            );
-            
-            case -3 -> String.format(
-                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
-                "━━━━━━━━━━━━━━━━━━━━━\n" +
-                "⏰ *Recordatorio Importante*\n\n" +
-                "Hola *%s* 👋\n\n" +
-                "Tu membresía vence en *3 días* (el %s).\n\n" +
-                "⚠️ No olvides renovar para seguir entrenando con nosotros.\n\n" +
-                "💳 *Métodos de pago disponibles:*\n" +
-                "   • Pago en línea (tarjeta/PSE)\n" +
-                "   • Efectivo en recepción\n" +
-                "   • Transferencia bancaria\n\n" +
-                "¿Tienes dudas? Responde a este mensaje.\n\n" +
-                "🏐 ¡Te esperamos en la cancha!",
-                nombreFormateado, fechaVencimiento
-            );
-            
-            case 0 -> String.format(
-                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
-                "━━━━━━━━━━━━━━━━━━━━━\n" +
-                "🚨 *¡ATENCIÓN! Vencimiento HOY*\n\n" +
-                "Hola *%s* 👋\n\n" +
-                "⚠️ *Tu membresía vence HOY %s*\n\n" +
-                "Para continuar entrenando sin interrupciones, te invitamos a realizar tu pago lo antes posible.\n\n" +
-                "💡 *Recuerda:* Si no renuevas hoy, mañana no podrás asistir a clases.\n\n" +
-                "📞 ¿Necesitas ayuda? Contáctanos.\n\n" +
-                "¡Gracias por entrenar con Galácticos! 🌟",
-                nombreFormateado, fechaVencimiento
-            );
-            
-            case 3 -> String.format(
-                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
-                "━━━━━━━━━━━━━━━━━━━━━\n" +
-                "🔔 *Membresía Vencida*\n\n" +
-                "Hola *%s* 👋\n\n" +
-                "Tu membresía venció hace *3 días* (desde el %s).\n\n" +
-                "😔 Te extrañamos en los entrenamientos.\n\n" +
-                "💪 *Renueva ahora y continúa mejorando:*\n" +
-                "   • Tus habilidades técnicas\n" +
-                "   • Tu condición física\n" +
-                "   • Tu trabajo en equipo\n\n" +
-                "📲 Realiza tu pago y vuelve a entrenar mañana mismo.\n\n" +
-                "¿Tienes alguna dificultad? Escríbenos, podemos ayudarte. 🤝",
-                nombreFormateado, fechaVencimiento
-            );
-            
-            case 5 -> String.format(
-                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
-                "━━━━━━━━━━━━━━━━━━━━━\n" +
-                "🚨 *URGENTE - Membresía Vencida*\n\n" +
-                "Hola *%s* 👋\n\n" +
-                "Tu membresía lleva *5 días vencida* (desde el %s).\n\n" +
-                "⚠️ *Tu lugar en el equipo está en riesgo.*\n\n" +
-                "📞 *Por favor comunícate con el profe encargado* para establecer un *compromiso de pago* y poder continuar entrenando.\n\n" +
-                "🤝 Queremos ayudarte a seguir siendo parte del equipo. No dejes pasar más tiempo.\n\n" +
-                "💪 ¡Te esperamos de vuelta en la cancha! 🏐",
-                nombreFormateado, fechaVencimiento
-            );
-            
-            default -> String.format(
-                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
-                "━━━━━━━━━━━━━━━━━━━━━\n" +
-                "📋 *Notificación de Membresía*\n\n" +
-                "Hola *%s* 👋\n\n" +
-                "Te recordamos que tu membresía tiene fecha de vencimiento: *%s*.\n\n" +
-                "Para más información sobre tu estado de cuenta, contáctanos.\n\n" +
-                "¡Gracias por ser parte de Galácticos! 🌟",
-                nombreFormateado, fechaVencimiento
-            );
-        };
-    }
+    public WhatsAppMessageResult enviarMensajeBienvenida(
+            String numeroDestino,
+            String nombreEstudiante,
+            String nombreEquipo) {
 
-    /**
-     * Capitaliza el nombre del estudiante (primera letra de cada palabra en mayúscula).
-     */
-    private String capitalizarNombre(String nombre) {
-        if (nombre == null || nombre.isBlank()) {
-            return "Estudiante";
-        }
-        
-        String[] palabras = nombre.toLowerCase().trim().split("\\s+");
-        StringBuilder resultado = new StringBuilder();
-        
-        for (String palabra : palabras) {
-            if (!palabra.isEmpty()) {
-                resultado.append(Character.toUpperCase(palabra.charAt(0)))
-                        .append(palabra.substring(1))
-                        .append(" ");
-            }
-        }
-        
-        return resultado.toString().trim();
-    }
-
-    /**
-     * Verifica si el servicio de Twilio está habilitado y configurado.
-     * 
-     * @return true si el servicio está operativo
-     */
-    public boolean isServicioDisponible() {
-        return twilioConfig.isEnabled() && 
-               twilioConfig.getAccountSid() != null && 
-               !twilioConfig.getAccountSid().isBlank();
-    }
-
-    /**
-     * Envía un mensaje de prueba para verificar la configuración.
-     * 
-     * @param numeroDestino número de teléfono para la prueba
-     * @return resultado del envío
-     */
-    public WhatsAppMessageResult enviarMensajePrueba(String numeroDestino) {
-        String mensajePrueba = 
-            "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
-            "━━━━━━━━━━━━━━━━━━━━━\n" +
-            "✅ *Prueba de Conexión Exitosa*\n\n" +
-            "¡Hola! Este es un mensaje de prueba.\n\n" +
-            "El sistema de notificaciones de WhatsApp está funcionando correctamente.\n\n" +
-            "📅 Fecha: " + java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")) + "\n" +
-            "⏰ Hora: " + java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")) + "\n\n" +
-            "¡Gracias por usar nuestro sistema! 🌟";
-        
-        return enviarMensaje(numeroDestino, mensajePrueba);
-    }
-
-    /**
-     * Envía un mensaje de bienvenida cuando un estudiante se registra.
-     * 
-     * @param numeroDestino número de teléfono del estudiante
-     * @param nombreEstudiante nombre del estudiante
-     * @param nombreEquipo nombre del equipo asignado
-     * @return resultado del envío
-     */
-    public WhatsAppMessageResult enviarMensajeBienvenida(String numeroDestino, String nombreEstudiante, String nombreEquipo) {
-        String nombreFormateado = capitalizarNombre(nombreEstudiante);
-        
+        String nombre = capitalizarNombre(nombreEstudiante);
         String mensaje = String.format(
             "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
             "━━━━━━━━━━━━━━━━━━━━━\n" +
@@ -275,51 +128,174 @@ public class TwilioWhatsAppService {
             "📋 *Tu información:*\n" +
             "   🏆 Equipo: %s\n\n" +
             "📱 Por este medio recibirás:\n" +
-            "   • Recordatorios de pago\n" +
-            "   • Información de entrenamientos\n" +
-            "   • Novedades del equipo\n\n" +
-            "¿Tienes preguntas? ¡Estamos para ayudarte!\n\n" +
+            "   • Recordatorios de pago de membresía\n" +
+            "   • Información importante del equipo\n\n" +
+            "💳 Cuando necesites pagar tu membresía puedes hacerlo en:\n" +
+            "%s\n\n" +
             "¡Nos vemos en la cancha! 🌟",
-            nombreFormateado, nombreEquipo
+            nombre, nombreEquipo, linkPago
         );
-        
         return enviarMensaje(numeroDestino, mensaje);
     }
 
     /**
      * Envía confirmación de pago recibido.
-     * 
-     * @param numeroDestino número de teléfono del estudiante
-     * @param nombreEstudiante nombre del estudiante
-     * @param mesPagado mes que se pagó
-     * @param monto monto pagado
-     * @param nuevaFechaVencimiento nueva fecha de vencimiento
-     * @return resultado del envío
      */
     public WhatsAppMessageResult enviarConfirmacionPago(
-            String numeroDestino, 
-            String nombreEstudiante, 
+            String numeroDestino,
+            String nombreEstudiante,
             String mesPagado,
             String monto,
             String nuevaFechaVencimiento) {
-        
-        String nombreFormateado = capitalizarNombre(nombreEstudiante);
-        
+
+        String nombre = capitalizarNombre(nombreEstudiante);
         String mensaje = String.format(
             "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
             "━━━━━━━━━━━━━━━━━━━━━\n" +
-            "✅ *Pago Recibido*\n\n" +
+            "✅ *¡Pago Recibido!*\n\n" +
             "Hola *%s* 👋\n\n" +
-            "¡Gracias por tu pago! Tu membresía está al día.\n\n" +
-            "📋 *Detalles:*\n" +
+            "¡Gracias! Tu membresía está al día. ✅\n\n" +
+            "📋 *Detalles del pago:*\n" +
             "   💰 Monto: $%s\n" +
             "   📅 Período: %s\n" +
             "   📆 Próximo vencimiento: %s\n\n" +
-            "¡Sigue entrenando y dando lo mejor! 💪\n\n" +
+            "¡Sigue entrenando y dando lo mejor! 💪\n" +
             "🏐 ¡Nos vemos en la cancha!",
-            nombreFormateado, monto, mesPagado, nuevaFechaVencimiento
+            nombre, monto, mesPagado, nuevaFechaVencimiento
         );
-        
         return enviarMensaje(numeroDestino, mensaje);
+    }
+
+    /**
+     * Envía un mensaje de prueba para verificar la configuración.
+     */
+    public WhatsAppMessageResult enviarMensajePrueba(String numeroDestino) {
+        String mensaje =
+            "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
+            "━━━━━━━━━━━━━━━━━━━━━\n" +
+            "✅ *Prueba de Conexión Exitosa*\n\n" +
+            "¡Hola! Este es un mensaje de prueba.\n\n" +
+            "El sistema de notificaciones de WhatsApp está funcionando correctamente.\n\n" +
+            "📅 Fecha: " + java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")) + "\n" +
+            "⏰ Hora: " + java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")) + "\n\n" +
+            "¡Gracias por usar nuestro sistema! 🌟";
+        return enviarMensaje(numeroDestino, mensaje);
+    }
+
+    public boolean isServicioDisponible() {
+        return twilioConfig.isEnabled() &&
+               twilioConfig.getAccountSid() != null &&
+               !twilioConfig.getAccountSid().isBlank();
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  CONSTRUCCIÓN DE MENSAJES
+    // ─────────────────────────────────────────────────────
+
+    private String construirMensaje(String nombre, String fechaVencimiento, int dias) {
+        String n = capitalizarNombre(nombre);
+        return switch (dias) {
+
+            case -5 -> String.format(
+                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
+                "━━━━━━━━━━━━━━━━━━━━━\n" +
+                "📅 *Recordatorio de Membresía*\n\n" +
+                "Hola *%s* 👋\n\n" +
+                "Te avisamos con tiempo que tu membresía vence en *5 días*, el *%s*.\n\n" +
+                "Renueva antes del vencimiento para continuar disfrutando de:\n" +
+                "   ✅ Entrenamientos regulares\n" +
+                "   ✅ Acceso a todas las instalaciones\n" +
+                "   ✅ Participación en torneos\n\n" +
+                "💳 *Paga fácil y rápido aquí:*\n" +
+                "%s\n\n" +
+                "¡Gracias por ser parte de la familia Galácticos! 🌟",
+                n, fechaVencimiento, linkPago);
+
+            case -2 -> String.format(
+                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
+                "━━━━━━━━━━━━━━━━━━━━━\n" +
+                "⏰ *¡Faltan solo 2 días!*\n\n" +
+                "Hola *%s* 👋\n\n" +
+                "Tu membresía vence el *%s*, es decir, en *2 días*.\n\n" +
+                "⚠️ Si no renuevas a tiempo, perderás el acceso a los entrenamientos.\n\n" +
+                "💳 *Renueva ahora en:*\n" +
+                "%s\n\n" +
+                "¿Tienes dudas sobre el pago? Responde a este mensaje y te ayudamos.\n\n" +
+                "🏐 ¡Te esperamos en la cancha!",
+                n, fechaVencimiento, linkPago);
+
+            case 0 -> String.format(
+                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
+                "━━━━━━━━━━━━━━━━━━━━━\n" +
+                "🚨 *¡Tu membresía vence HOY!*\n\n" +
+                "Hola *%s* 👋\n\n" +
+                "⚠️ Hoy *%s* es el último día de tu membresía.\n\n" +
+                "Para seguir entrenando *sin interrupción*, realiza tu pago hoy mismo:\n\n" +
+                "💳 *Pagar ahora:*\n" +
+                "%s\n\n" +
+                "💡 Si no renuevas hoy, mañana tu estado pasará a *EN MORA*.\n\n" +
+                "¿Necesitas ayuda? Contáctanos. ¡Gracias! 🌟",
+                n, fechaVencimiento, linkPago);
+
+            case 1 -> String.format(
+                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
+                "━━━━━━━━━━━━━━━━━━━━━\n" +
+                "🔴 *Membresía Vencida - 1 día en mora*\n\n" +
+                "Hola *%s* 👋\n\n" +
+                "Tu membresía venció ayer (*%s*) y actualmente tu cuenta está en *mora*.\n\n" +
+                "Para regularizar tu situación y volver a los entrenamientos, realiza tu pago:\n\n" +
+                "💳 *Pagar aquí:*\n" +
+                "%s\n\n" +
+                "😔 Te extrañamos en los entrenamientos. ¡Renueva y vuelve pronto! 💪",
+                n, fechaVencimiento, linkPago);
+
+            case 2 -> String.format(
+                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
+                "━━━━━━━━━━━━━━━━━━━━━\n" +
+                "🔴 *Membresía Vencida - 2 días en mora*\n\n" +
+                "Hola *%s* 👋\n\n" +
+                "Han pasado *2 días* desde que tu membresía venció el *%s*.\n\n" +
+                "Recuerda que mientras estés en mora no puedes participar en los entrenamientos.\n\n" +
+                "💳 *Regulariza tu pago ahora:*\n" +
+                "%s\n\n" +
+                "¿Tienes alguna dificultad económica? Escríbenos, podemos ayudarte. 🤝",
+                n, fechaVencimiento, linkPago);
+
+            case 3 -> String.format(
+                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
+                "━━━━━━━━━━━━━━━━━━━━━\n" +
+                "🚨 *URGENTE - 3 días en mora*\n\n" +
+                "Hola *%s* 👋\n\n" +
+                "Tu membresía lleva *3 días vencida* desde el *%s*.\n\n" +
+                "⚠️ *Tu lugar en el equipo está en riesgo.*\n\n" +
+                "Por favor comunícate con el *profesor encargado* para establecer un compromiso de pago y continuar entrenando.\n\n" +
+                "💳 *También puedes pagar directamente en:*\n" +
+                "%s\n\n" +
+                "🤝 Queremos que sigas siendo parte del equipo. ¡No dejes pasar más tiempo! 🏐",
+                n, fechaVencimiento, linkPago);
+
+            default -> String.format(
+                "🏐 *ESCUELA DE VOLEIBOL GALÁCTICOS*\n" +
+                "━━━━━━━━━━━━━━━━━━━━━\n" +
+                "📋 *Notificación de Membresía*\n\n" +
+                "Hola *%s* 👋\n\n" +
+                "Tu membresía tiene fecha de referencia: *%s*.\n\n" +
+                "Para más información sobre tu estado, contáctanos o visita:\n" +
+                "%s\n\n" +
+                "¡Gracias por ser parte de Galácticos! 🌟",
+                n, fechaVencimiento, linkPago);
+        };
+    }
+
+    private String capitalizarNombre(String nombre) {
+        if (nombre == null || nombre.isBlank()) return "Estudiante";
+        String[] palabras = nombre.toLowerCase().trim().split("\\s+");
+        StringBuilder sb = new StringBuilder();
+        for (String p : palabras) {
+            if (!p.isEmpty()) {
+                sb.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1)).append(" ");
+            }
+        }
+        return sb.toString().trim();
     }
 }

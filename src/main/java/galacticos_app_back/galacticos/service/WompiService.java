@@ -29,6 +29,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -688,11 +689,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
         int errores = 0;
         
         try {
-            // Obtener mes actual
-            String mesActual = LocalDate.now(ZONA_COLOMBIA).getYear() + "-" + 
-                    String.format("%02d", LocalDate.now(ZONA_COLOMBIA).getMonthValue());
-            
-            log.info("🔄 Corrigiendo estados de estudiantes - Mes actual: {}", mesActual);
+            log.info("🔄 Corrigiendo estados de estudiantes con pagos Wompi pendientes sin confirmar");
             
             // Obtener pagos pendientes sin transactionId
             List<Pago> pagosPendientes = pagoRepository.findPagosPendientesOnline();
@@ -730,28 +727,25 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     detalle.put("nombre", estudiante.getNombreCompleto());
                     detalle.put("estadoAnterior", estudiante.getEstadoPago().name());
                     
-                    // Verificar si tiene un pago CONFIRMADO (con transactionId) del mes actual
-                    boolean tienePagoConfirmado = pagoRepository.findByEstudianteIdEstudiante(idEstudiante)
-                            .stream()
-                            .anyMatch(p -> p.getEstadoPago() == Pago.EstadoPago.PAGADO 
-                                    && p.getWompiTransactionId() != null
-                                    && mesActual.equals(p.getMesPagado()));
-                    
-                    detalle.put("tienePagoConfirmadoMesActual", tienePagoConfirmado);
-                    
-                    // Si NO tiene pago confirmado y está AL_DIA, corregir a PENDIENTE
-                    if (!tienePagoConfirmado && estudiante.getEstadoPago() == Estudiante.EstadoPago.AL_DIA) {
-                        estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
+                    // Determinar estado correcto según membresía más reciente
+                    LocalDate hoy = LocalDate.now(ZONA_COLOMBIA);
+                    Estudiante.EstadoPago estadoCorrecto = calcularEstadoCorrecto(estudiante, hoy);
+
+                    detalle.put("estadoCorrecto", estadoCorrecto.name());
+
+                    if (estudiante.getEstadoPago() != estadoCorrecto) {
+                        estudiante.setEstadoPago(estadoCorrecto);
                         estudianteRepository.save(estudiante);
-                        
-                        detalle.put("estadoNuevo", "PENDIENTE");
+
+                        detalle.put("estadoNuevo", estadoCorrecto.name());
                         detalle.put("accion", "ESTADO_CORREGIDO");
                         estudiantesCorregidos++;
-                        
-                        log.info("✅ Estudiante {} corregido: AL_DIA -> PENDIENTE", estudiante.getNombreCompleto());
+
+                        log.info("✅ Estudiante {} corregido: {} -> {}",
+                                estudiante.getNombreCompleto(), detalle.get("estadoAnterior"), estadoCorrecto.name());
                     } else {
                         detalle.put("estadoNuevo", estudiante.getEstadoPago().name());
-                        detalle.put("accion", tienePagoConfirmado ? "TIENE_PAGO_CONFIRMADO" : "SIN_CAMBIOS");
+                        detalle.put("accion", "SIN_CAMBIOS");
                     }
                     
                     // Eliminar pagos pendientes sin confirmar si se solicita
@@ -804,114 +798,67 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
     public Map<String, Object> sincronizarEstadosConPagos() {
         Map<String, Object> resultado = new HashMap<>();
         List<Map<String, Object>> detalles = new ArrayList<>();
-        
-        int estudiantesActualizados = 0;
-        int membresiasActivadas = 0;
-        int yaAlDia = 0;
-        int sinPagosConfirmados = 0;
+
+        int sinCambios = 0;
+        int actualizados = 0;
         int errores = 0;
-        
+
         try {
-            log.info("🔄 ===== SINCRONIZANDO ESTADOS CON PAGOS CONFIRMADOS =====");
-            
-            // Obtener todos los estudiantes activos que NO están AL_DIA
-            List<Estudiante> estudiantesNoAlDia = estudianteRepository.findByEstado(true).stream()
-                    .filter(e -> e.getEstadoPago() != Estudiante.EstadoPago.AL_DIA)
-                    .toList();
-            
-            log.info("📋 Estudiantes activos no AL_DIA: {}", estudiantesNoAlDia.size());
-            
-            // Calcular el mes actual y el anterior para considerar pagos recientes
+            log.info("🔄 ===== SINCRONIZANDO ESTADOS CON MEMBRESÍAS =====");
+
             LocalDate hoy = LocalDate.now(ZONA_COLOMBIA);
-            String mesActual = hoy.getYear() + "-" + String.format("%02d", hoy.getMonthValue());
-            String mesAnterior = hoy.minusMonths(1).getYear() + "-" + String.format("%02d", hoy.minusMonths(1).getMonthValue());
-            
-            for (Estudiante estudiante : estudiantesNoAlDia) {
+            List<Estudiante> estudiantes = estudianteRepository.findByEstado(true);
+
+            log.info("📋 Estudiantes activos a evaluar: {}", estudiantes.size());
+
+            for (Estudiante estudiante : estudiantes) {
                 Map<String, Object> detalle = new HashMap<>();
                 detalle.put("idEstudiante", estudiante.getIdEstudiante());
                 detalle.put("nombre", estudiante.getNombreCompleto());
                 detalle.put("estadoAnterior", estudiante.getEstadoPago().name());
-                
+
                 try {
-                    // Buscar pagos PAGADOS con transactionId (confirmados por Wompi)
-                    List<Pago> pagosPagados = pagoRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante())
-                            .stream()
-                            .filter(p -> p.getEstadoPago() == Pago.EstadoPago.PAGADO)
-                            .filter(p -> p.getWompiTransactionId() != null && !p.getWompiTransactionId().isEmpty())
-                            .toList();
-                    
-                    detalle.put("pagosConfirmados", pagosPagados.size());
-                    
-                    if (!pagosPagados.isEmpty()) {
-                        // Verificar si tiene pago reciente (mes actual o anterior)
-                        boolean tienePagoReciente = pagosPagados.stream()
-                                .anyMatch(p -> mesActual.equals(p.getMesPagado()) || 
-                                              mesAnterior.equals(p.getMesPagado()) ||
-                                              (p.getFechaPago() != null && p.getFechaPago().isAfter(hoy.minusDays(35))));
-                        
-                        if (tienePagoReciente) {
-                            // Actualizar estado a AL_DIA
-                            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
-                            estudianteRepository.save(estudiante);
-                            estudiantesActualizados++;
-                            
-                            // Activar membresía
-                            activarMembresiaEstudiante(estudiante);
-                            membresiasActivadas++;
-                            
-                            detalle.put("estadoNuevo", "AL_DIA");
-                            detalle.put("membresiaActivada", true);
-                            detalle.put("accion", "ACTUALIZADO_A_AL_DIA");
-                            
-                            log.info("✅ Estudiante {} actualizado: {} -> AL_DIA, membresía activada", 
-                                estudiante.getNombreCompleto(), detalle.get("estadoAnterior"));
-                        } else {
-                            detalle.put("accion", "PAGO_NO_RECIENTE");
-                            sinPagosConfirmados++;
-                        }
+                    Estudiante.EstadoPago estadoCorrecto = calcularEstadoCorrecto(estudiante, hoy);
+                    detalle.put("estadoCorrecto", estadoCorrecto.name());
+
+                    if (estudiante.getEstadoPago() == estadoCorrecto) {
+                        detalle.put("accion", "SIN_CAMBIOS");
+                        sinCambios++;
                     } else {
-                        detalle.put("accion", "SIN_PAGOS_CONFIRMADOS");
-                        sinPagosConfirmados++;
+                        estudiante.setEstadoPago(estadoCorrecto);
+                        estudianteRepository.save(estudiante);
+                        actualizados++;
+
+                        if (estadoCorrecto == Estudiante.EstadoPago.AL_DIA) {
+                            activarMembresiaEstudiante(estudiante);
+                            detalle.put("membresiaActivada", true);
+                        }
+
+                        detalle.put("accion", "ACTUALIZADO");
+                        log.info("✅ Estudiante {} → {} -> {}",
+                                estudiante.getNombreCompleto(), detalle.get("estadoAnterior"), estadoCorrecto.name());
                     }
-                    
+
                 } catch (Exception e) {
                     detalle.put("error", e.getMessage());
                     detalle.put("accion", "ERROR");
                     errores++;
                     log.error("❌ Error procesando estudiante {}: {}", estudiante.getIdEstudiante(), e.getMessage());
                 }
-                
+
                 detalles.add(detalle);
             }
-            
-            // También revisar estudiantes AL_DIA para asegurar que la membresía esté activa
-            List<Estudiante> estudiantesAlDia = estudianteRepository.findByEstado(true).stream()
-                    .filter(e -> e.getEstadoPago() == Estudiante.EstadoPago.AL_DIA)
-                    .toList();
-            
-            for (Estudiante estudiante : estudiantesAlDia) {
-                yaAlDia++;
-                // Verificar si tiene membresía activa, si no, activarla
-                List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
-                if (membresias.isEmpty() || !membresias.get(0).getEstado()) {
-                    activarMembresiaEstudiante(estudiante);
-                    membresiasActivadas++;
-                    log.info("✅ Membresía activada para estudiante AL_DIA: {}", estudiante.getNombreCompleto());
-                }
-            }
-            
-            log.info("✅ Sincronización completada: {} actualizados a AL_DIA, {} membresías activadas, {} ya AL_DIA, {} sin pagos recientes, {} errores",
-                estudiantesActualizados, membresiasActivadas, yaAlDia, sinPagosConfirmados, errores);
+
+            log.info("✅ Sincronización completada: {} actualizados, {} sin cambios, {} errores",
+                    actualizados, sinCambios, errores);
                 
         } catch (Exception e) {
             log.error("❌ Error en sincronización de estados: {}", e.getMessage(), e);
             resultado.put("error", e.getMessage());
         }
         
-        resultado.put("estudiantesActualizadosAAlDia", estudiantesActualizados);
-        resultado.put("membresiasActivadas", membresiasActivadas);
-        resultado.put("yaAlDia", yaAlDia);
-        resultado.put("sinPagosRecientes", sinPagosConfirmados);
+        resultado.put("actualizados", actualizados);
+        resultado.put("sinCambios", sinCambios);
         resultado.put("errores", errores);
         resultado.put("detalles", detalles);
         
@@ -2042,8 +1989,58 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     estudiante.getNombreCompleto(), fechaFin);
             }
         } catch (Exception e) {
-            log.error("❌ Error activando membresía para estudiante {}: {}", 
+            log.error("❌ Error activando membresía para estudiante {}: {}",
                 estudiante.getIdEstudiante(), e.getMessage(), e);
         }
+    }
+
+    /**
+     * Determina el estado de pago correcto de un estudiante basándose en su membresía más reciente.
+     *
+     * Reglas (en orden):
+     *   COMPROMISO_PAGO  → nunca se toca automáticamente
+     *   Sin membresía    → PENDIENTE
+     *   fechaFin >= hoy  → AL_DIA  (membresía vigente; cubre 1, 3 o 6 meses)
+     *   fechaFin < hoy  +  pago PAGADO con fechaPago >= fechaFin  → AL_DIA  (renovó)
+     *   fechaFin < hoy  +  sin pago desde fechaFin               → EN_MORA
+     */
+    private Estudiante.EstadoPago calcularEstadoCorrecto(Estudiante estudiante, LocalDate hoy) {
+        if (estudiante.getEstadoPago() == Estudiante.EstadoPago.COMPROMISO_PAGO) {
+            return Estudiante.EstadoPago.COMPROMISO_PAGO;
+        }
+
+        List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
+
+        if (membresias.isEmpty()) {
+            return Estudiante.EstadoPago.PENDIENTE;
+        }
+
+        Membresia membresiaReciente = membresias.stream()
+                .filter(m -> m.getFechaFin() != null)
+                .max(Comparator.comparing(Membresia::getFechaFin))
+                .orElse(null);
+
+        if (membresiaReciente == null) {
+            return Estudiante.EstadoPago.PENDIENTE;
+        }
+
+        LocalDate fechaFin = membresiaReciente.getFechaFin();
+
+        // Membresía todavía vigente
+        if (!fechaFin.isBefore(hoy)) {
+            return Estudiante.EstadoPago.AL_DIA;
+        }
+
+        // Membresía vencida: ¿hubo algún pago confirmado desde la fecha de vencimiento?
+        boolean pagoDespuesVencimiento = pagoRepository
+                .findByEstudianteIdEstudiante(estudiante.getIdEstudiante())
+                .stream()
+                .anyMatch(p -> p.getEstadoPago() == Pago.EstadoPago.PAGADO
+                            && p.getFechaPago() != null
+                            && !p.getFechaPago().isBefore(fechaFin));
+
+        return pagoDespuesVencimiento
+                ? Estudiante.EstadoPago.AL_DIA
+                : Estudiante.EstadoPago.EN_MORA;
     }
 }

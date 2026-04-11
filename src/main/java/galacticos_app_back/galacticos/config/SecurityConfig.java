@@ -17,13 +17,11 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
 
 import java.util.Arrays;
-import java.util.Collections;
 
 @Configuration
 @EnableWebSecurity
@@ -39,17 +37,19 @@ public class SecurityConfig {
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    // Rutas públicas que no requieren autenticación
     private static final String[] PUBLIC_URLS = {
             "/api/auth/**",
             "/api/public/**",
-            "/api/test/**",  // ⚠️ Endpoints de prueba - REMOVER EN PRODUCCIÓN
+            // Endpoints internos: sin JWT, protegidos por API Key en el propio controller
+            "/api/internal/**",
+            // Webhooks de Wompi (sin JWT, validan firma propia)
             "/api/wompi/webhook",
             "/api/wompi/config",
             "/api/wompi/payment-result",
             "/api/wompi/integrity-signature",
             "/api/wompi/generate-reference",
             "/api/wompi/transaction/**",
+            // Recursos estáticos y documentación
             "/uploads/**",
             "/assets/**",
             "/static/**",
@@ -82,7 +82,7 @@ public class SecurityConfig {
     public CorsFilter corsFilter() {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         CorsConfiguration config = new CorsConfiguration();
-        
+
         config.setAllowedOrigins(Arrays.asList(
             "http://localhost:4200",
             "http://localhost:3000",
@@ -101,24 +101,14 @@ public class SecurityConfig {
             "http://galacticos-frontend.s3-website-us-east-1.amazonaws.com",
             "https://galacticos-frontend.s3-website-us-east-1.amazonaws.com"
         ));
-        
-        config.setAllowedMethods(Arrays.asList(
-            "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"
-        ));
-        
-        config.setAllowedHeaders(Arrays.asList(
-            "*"
-        ));
-        
-        config.setExposedHeaders(Arrays.asList(
-            "Authorization", "Content-Type", "X-Requested-With"
-        ));
-        
+
+        config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"));
+        config.setAllowedHeaders(Arrays.asList("*"));
+        config.setExposedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
-        
+
         source.registerCorsConfiguration("/**", config);
-        
         return new CorsFilter(source);
     }
 
@@ -126,16 +116,12 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
-            .exceptionHandling(exception -> exception
-                    .authenticationEntryPoint(unauthorizedHandler)
-            )
-            .sessionManagement(session -> session
-                    .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-            )
+            .exceptionHandling(ex -> ex.authenticationEntryPoint(unauthorizedHandler))
+            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                    .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                    .requestMatchers(PUBLIC_URLS).permitAll()
-                    .anyRequest().authenticated()
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                .requestMatchers(PUBLIC_URLS).permitAll()
+                .anyRequest().authenticated()
             )
             .authenticationProvider(daoAuthenticationProvider())
             .addFilterBefore(corsFilter(), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)

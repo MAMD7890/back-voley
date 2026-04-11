@@ -56,6 +56,7 @@ public class ExcelEstudianteImportDTO {
     
     // Información de pagos
     private Integer diaPagoMes;
+    private String estadoPago;
     
     // Información contacto emergencia
     private String nombreEmergencia;

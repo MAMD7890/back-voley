@@ -166,7 +166,7 @@ CREATE TABLE estudiante (
     foto_url VARCHAR(255),
     foto_nombre VARCHAR(100),
     estado BOOLEAN DEFAULT TRUE,
-    estado_pago ENUM('PENDIENTE','AL_DIA','EN_MORA','COMPROMISO_PAGO') DEFAULT 'PENDIENTE',
+    estado_pago ENUM('PENDIENTE','AL_DIA','EN_MORA','COMPROMISO_PAGO','DECLINADO') DEFAULT 'PENDIENTE',
     FOREIGN KEY (id_sede) REFERENCES sede(id_sede)
 );
 

@@ -1,10 +1,20 @@
 package galacticos_app_back.galacticos.entity;
 
-import jakarta.persistence.*;
+import java.time.LocalDate;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import java.time.LocalDate;
 
 @Entity
 @Table(name = "estudiante")
@@ -187,12 +197,14 @@ public class Estudiante {
      * - AL_DIA: Pago realizado dentro del período correspondiente
      * - EN_MORA: No realizó el pago antes de la fecha límite del mes
      * - COMPROMISO_PAGO: Acuerdo de pago posterior, establecido manualmente
+     * - DECLINADO: Pago rechazado o transacción fallida
      */
     public enum EstadoPago {
         PENDIENTE,
         AL_DIA,
         EN_MORA,
-        COMPROMISO_PAGO
+        COMPROMISO_PAGO,
+        DECLINADO
     }
     
     public enum Sexo {
