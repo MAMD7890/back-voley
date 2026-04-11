@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -50,8 +51,16 @@ public class EstudianteController {
     private ExcelImportService excelImportService;
     
     @GetMapping
-    public ResponseEntity<List<Estudiante>> obtenerTodos() {
-        return ResponseEntity.ok(estudianteService.obtenerTodos());
+    public ResponseEntity<List<EstudianteResponseDTO>> obtenerTodos(Authentication authentication) {
+        boolean isAdmin = esAdmin(authentication);
+        List<Estudiante> lista = isAdmin
+                ? estudianteService.obtenerTodos()
+                : estudianteService.obtenerActivos();
+        return ResponseEntity.ok(
+            lista.stream()
+                .map(EstudianteResponseDTO::fromEntity)
+                .collect(java.util.stream.Collectors.toList())
+        );
     }
     
     @GetMapping("/{id}")
@@ -283,8 +292,11 @@ public class EstudianteController {
      * GET /api/estudiantes/con-estado-pago
      */
     @GetMapping("/con-estado-pago")
-    public ResponseEntity<List<EstudianteConEstadoPagoDTO>> obtenerTodosConEstadoPago() {
-        return ResponseEntity.ok(estudianteService.obtenerTodosConEstadoPago());
+    public ResponseEntity<List<EstudianteConEstadoPagoDTO>> obtenerTodosConEstadoPago(Authentication authentication) {
+        boolean isAdmin = esAdmin(authentication);
+        return ResponseEntity.ok(isAdmin
+                ? estudianteService.obtenerTodosConEstadoPago()
+                : estudianteService.obtenerActivosConEstadoPago());
     }
     
     /**
@@ -400,6 +412,36 @@ public class EstudianteController {
         }
     }
     
+    /**
+     * Cambiar fecha de vencimiento de membresía del estudiante
+     * PATCH /api/estudiantes/{id}/membresia/fecha-fin
+     * Body: { "fechaFin": "2026-05-10" }
+     */
+    @PatchMapping("/{id}/membresia/fecha-fin")
+    public ResponseEntity<?> cambiarFechaFinMembresia(
+            @PathVariable Integer id,
+            @RequestBody Map<String, String> body) {
+        try {
+            String fechaStr = body.get("fechaFin");
+            if (fechaStr == null || fechaStr.isBlank()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "El campo 'fechaFin' es requerido (formato: yyyy-MM-dd)"));
+            }
+            LocalDate nuevaFechaFin = LocalDate.parse(fechaStr);
+            Map<String, Object> resultado = estudianteService.cambiarFechaFinMembresia(id, nuevaFechaFin);
+            return ResponseEntity.ok(resultado);
+        } catch (java.time.format.DateTimeParseException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Formato de fecha inválido. Use yyyy-MM-dd (ej: 2026-05-10)"));
+        } catch (RuntimeException e) {
+            String msg = e.getMessage();
+            if (msg.contains("no encontrado") || msg.contains("no tiene membresía")) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", msg));
+            }
+            return ResponseEntity.badRequest().body(Map.of("error", msg));
+        }
+    }
+
     /**
      * Verificar y actualizar estados de pago (ejecutar manualmente o por scheduler)
      * POST /api/estudiantes/verificar-estados-pago
@@ -539,5 +581,11 @@ public class EstudianteController {
                         "detalles", "Error al procesar el archivo Excel: " + e.getMessage()
                     ));
         }
+    }
+
+    // ── Helper ──────────────────────────────────────────────────────────
+    private boolean esAdmin(Authentication authentication) {
+        return authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
     }
 }

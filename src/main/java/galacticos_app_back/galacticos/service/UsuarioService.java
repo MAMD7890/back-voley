@@ -20,6 +20,17 @@ public class UsuarioService {
     public List<Usuario> obtenerTodos() {
         return usuarioRepository.findAll();
     }
+
+    public List<Usuario> obtenerActivos() {
+        return usuarioRepository.findByEstado(true);
+    }
+
+    public Usuario desactivar(Integer id) {
+        Usuario usuario = usuarioRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado con ID: " + id));
+        usuario.setEstado(false);
+        return usuarioRepository.save(usuario);
+    }
     
     public Optional<Usuario> obtenerPorId(Integer id) {
         return usuarioRepository.findById(id);

@@ -4,6 +4,7 @@ import galacticos_app_back.galacticos.entity.Estudiante;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import java.time.LocalDate;
 
 /**
  * DTO para cambiar el estado de pago de un estudiante manualmente
@@ -28,4 +29,10 @@ public class CambioEstadoPagoDTO {
      * ID del mes pagado si aplica (formato: "ENERO_2026", "FEBRERO_2026", etc.)
      */
     private String mesPagado;
+
+    /**
+     * Fecha límite del acuerdo de pago. Solo aplica cuando nuevoEstado = COMPROMISO_PAGO.
+     * Si llega esta fecha sin cambio a AL_DIA, el sistema cambia el estado a EN_MORA automáticamente.
+     */
+    private LocalDate fechaLimiteCompromiso;
 }

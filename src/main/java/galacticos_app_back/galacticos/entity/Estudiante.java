@@ -11,6 +11,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -186,7 +187,38 @@ public class Estudiante {
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private EstadoPago estadoPago = EstadoPago.PENDIENTE;
-    
+
+    /**
+     * Indica que el estado de pago fue cambiado manualmente por un administrador.
+     * Cuando es true, las tareas automáticas nocturnas no sobreescriben el estado.
+     * Se resetea a false cuando se confirma un pago (Wompi o efectivo).
+     */
+    @Column(columnDefinition = "BOOLEAN DEFAULT FALSE")
+    private Boolean cambiadoManualmente = false;
+
+    /**
+     * Fecha límite de un acuerdo de pago (COMPROMISO_PAGO).
+     * Si llega esta fecha y el estado sigue siendo COMPROMISO_PAGO, se cambia a EN_MORA.
+     */
+    @Column
+    private java.time.LocalDate fechaLimiteCompromiso;
+
+    /**
+     * Fecha de inicio del período de gracia de 5 días.
+     * Se establece automáticamente al crear el registro vía @PrePersist.
+     * Puede reiniciarse manualmente en correcciones para reiniciar el contador de gracia.
+     * Mientras sea NULL, la regla de 5 días no aplica al estudiante.
+     */
+    @Column
+    private LocalDate fechaRegistro;
+
+    @PrePersist
+    private void prePersist() {
+        if (this.fechaRegistro == null) {
+            this.fechaRegistro = LocalDate.now();
+        }
+    }
+
     public enum TipoDocumento {
         TI, CC, RC, PASAPORTE
     }

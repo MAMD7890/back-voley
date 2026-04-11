@@ -1245,18 +1245,60 @@ public class EstudianteService {
     public Estudiante cambiarEstadoPago(Integer idEstudiante, CambioEstadoPagoDTO cambioDTO) {
         Estudiante estudiante = estudianteRepository.findById(idEstudiante)
                 .orElseThrow(() -> new RuntimeException("Estudiante no encontrado con ID: " + idEstudiante));
-        
+
         Estudiante.EstadoPago estadoAnterior = estudiante.getEstadoPago();
         estudiante.setEstadoPago(cambioDTO.getNuevoEstado());
-        
+        // Marcar como cambio manual para que las tareas automáticas no sobreescriban
+        estudiante.setCambiadoManualmente(true);
+
+        // Si es COMPROMISO_PAGO, guardar la fecha límite del acuerdo
+        if (cambioDTO.getNuevoEstado() == Estudiante.EstadoPago.COMPROMISO_PAGO) {
+            estudiante.setFechaLimiteCompromiso(cambioDTO.getFechaLimiteCompromiso());
+        } else {
+            estudiante.setFechaLimiteCompromiso(null);
+        }
+
         Estudiante estudianteActualizado = estudianteRepository.save(estudiante);
-        
-        System.out.println(String.format("Estado de pago cambiado - Estudiante: %s, De: %s, A: %s, Observación: %s",
+
+        System.out.println(String.format("Estado de pago cambiado manualmente - Estudiante: %s, De: %s, A: %s, Observación: %s",
                 estudiante.getNombreCompleto(), estadoAnterior, cambioDTO.getNuevoEstado(), cambioDTO.getObservacion()));
-        
+
         return estudianteActualizado;
     }
-    
+
+    /**
+     * Cambia la fecha de vencimiento (fechaFin) de la membresía activa de un estudiante.
+     * Útil cuando se acuerda una nueva fecha de corte con el estudiante.
+     */
+    @Transactional
+    public Map<String, Object> cambiarFechaFinMembresia(Integer idEstudiante, LocalDate nuevaFechaFin) {
+        Estudiante estudiante = estudianteRepository.findById(idEstudiante)
+                .orElseThrow(() -> new RuntimeException("Estudiante no encontrado con ID: " + idEstudiante));
+
+        List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(idEstudiante);
+        if (membresias == null || membresias.isEmpty()) {
+            throw new RuntimeException("El estudiante no tiene membresía registrada");
+        }
+
+        // Usar la membresía más reciente por fechaFin
+        Membresia membresia = membresias.stream()
+                .filter(m -> m.getFechaFin() != null)
+                .max(java.util.Comparator.comparing(Membresia::getFechaFin))
+                .orElseThrow(() -> new RuntimeException("No se encontró membresía con fecha de vencimiento"));
+
+        LocalDate fechaFinAnterior = membresia.getFechaFin();
+        membresia.setFechaFin(nuevaFechaFin);
+        membresiaRepository.save(membresia);
+
+        return Map.of(
+            "idEstudiante", idEstudiante,
+            "nombreEstudiante", estudiante.getNombreCompleto(),
+            "idMembresia", membresia.getIdMembresia(),
+            "fechaFinAnterior", fechaFinAnterior.toString(),
+            "fechaFinNueva", nuevaFechaFin.toString()
+        );
+    }
+
     /**
      * Registra un pago en efectivo y actualiza el estado del estudiante
      * @param pagoDTO DTO con la información del pago
@@ -1266,31 +1308,33 @@ public class EstudianteService {
     public Pago registrarPagoEfectivo(RegistroPagoEfectivoDTO pagoDTO) {
         Estudiante estudiante = estudianteRepository.findById(pagoDTO.getIdEstudiante())
                 .orElseThrow(() -> new RuntimeException("Estudiante no encontrado con ID: " + pagoDTO.getIdEstudiante()));
-        
+
         // Crear el registro de pago
         Pago pago = new Pago();
         pago.setEstudiante(estudiante);
         pago.setMesPagado(pagoDTO.getMesPagado());
         pago.setValor(pagoDTO.getValor());
         pago.setMetodoPago(Pago.MetodoPago.EFECTIVO);
-        pago.setReferenciaPago(pagoDTO.getReferenciaPago() != null ? pagoDTO.getReferenciaPago() : 
+        pago.setReferenciaPago(pagoDTO.getReferenciaPago() != null ? pagoDTO.getReferenciaPago() :
                 "EFECT-" + pagoDTO.getIdEstudiante() + "-" + System.currentTimeMillis());
         pago.setFechaPago(LocalDate.now());
         pago.setHoraPago(LocalTime.now());
         pago.setEstadoPago(Pago.EstadoPago.PAGADO);
-        
+
         Pago pagoGuardado = pagoRepository.save(pago);
-        
-        // Actualizar estado del estudiante a AL_DIA
+
+        // Actualizar estado del estudiante a AL_DIA y limpiar flags manuales
         estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+        estudiante.setCambiadoManualmente(false);
+        estudiante.setFechaLimiteCompromiso(null);
         estudianteRepository.save(estudiante);
-        
+
         // Actualizar membresía si existe
         actualizarMembresiaAlPagar(estudiante.getIdEstudiante());
-        
+
         System.out.println(String.format("Pago en efectivo registrado - Estudiante: %s, Mes: %s, Valor: %s",
                 estudiante.getNombreCompleto(), pagoDTO.getMesPagado(), pagoDTO.getValor()));
-        
+
         return pagoGuardado;
     }
     

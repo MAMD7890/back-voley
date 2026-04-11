@@ -92,6 +92,35 @@ public class InternalTaskController {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    //  CORRECCIÓN PUNTUAL: sanear EN_MORA sin membresía real
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Busca estudiantes EN_MORA que nunca tuvieron membresía real y los pasa a PENDIENTE,
+     * reiniciando su fecha de registro a hoy para que el ciclo de 5 días arranque desde cero.
+     *
+     * Se ejecuta una sola vez (o cuando se detecte data sucia).
+     * POST /api/internal/estados/corregir-sin-membresia
+     */
+    @PostMapping("/estados/corregir-sin-membresia")
+    public ResponseEntity<Map<String, Object>> corregirEnMoraSinMembresia(HttpServletRequest request) {
+        if (!esValida(request)) return respuestaNoAutorizada();
+
+        log.info("🔧 [LAMBDA] Corrección EN_MORA sin membresía desde IP: {}", request.getRemoteAddr());
+
+        try {
+            Map<String, Object> resultado = tareasInternasService.corregirEnMoraSinMembresia();
+            return ResponseEntity.ok(resultado);
+        } catch (Exception e) {
+            log.error("❌ Error en corrección: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                "error", e.getMessage(),
+                "timestamp", LocalDateTime.now().toString()
+            ));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     //  HEALTH CHECK
     // ─────────────────────────────────────────────────────────────────
 

@@ -57,4 +57,21 @@ public interface PagoRepository extends JpaRepository<Pago, Integer> {
     // Buscar pagos pendientes ONLINE (para sincronización con Wompi)
     @Query("SELECT p FROM Pago p WHERE p.estadoPago = 'PENDIENTE' AND p.metodoPago = 'ONLINE' ORDER BY p.idPago DESC")
     List<Pago> findPagosPendientesOnline();
+
+    /**
+     * Busca pagos APROBADOS de un estudiante dentro de un rango de fechas
+     * con valor mayor o igual al mínimo esperado.
+     * Usado para corroborar que una membresía tiene respaldo real de pago.
+     */
+    @Query("SELECT p FROM Pago p " +
+           "WHERE p.estudiante.idEstudiante = :idEstudiante " +
+           "AND p.estadoPago = 'PAGADO' " +
+           "AND p.valor >= :valorMinimo " +
+           "AND p.fechaPago BETWEEN :desde AND :hasta " +
+           "ORDER BY p.fechaPago DESC")
+    List<Pago> findPagosAprobadosEnRango(
+            @Param("idEstudiante") Integer idEstudiante,
+            @Param("desde") LocalDate desde,
+            @Param("hasta") LocalDate hasta,
+            @Param("valorMinimo") BigDecimal valorMinimo);
 }

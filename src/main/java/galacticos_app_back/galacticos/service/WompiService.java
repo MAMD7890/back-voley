@@ -1955,42 +1955,60 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             log.warn("⚠️ No se puede activar membresía: estudiante es null");
             return;
         }
-        
+
         try {
             List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
-            
             LocalDate hoy = LocalDate.now(ZONA_COLOMBIA);
-            LocalDate fechaFin = hoy.plusDays(30); // Membresía de 30 días
-            
+
+            // Limpiar flag de cambio manual ya que se confirmó un pago real
+            estudiante.setCambiadoManualmente(false);
+            estudiante.setFechaLimiteCompromiso(null);
+            estudianteRepository.save(estudiante);
+
             if (membresias != null && !membresias.isEmpty()) {
-                // Ya tiene membresía, activarla y extender
-                Membresia membresia = membresias.get(0);
+                // Tomar la membresía más reciente por fechaFin
+                Membresia membresia = membresias.stream()
+                        .filter(m -> m.getFechaFin() != null)
+                        .max(Comparator.comparing(Membresia::getFechaFin))
+                        .orElse(membresias.get(0));
+
                 membresia.setEstado(true);
-                
-                // Si la membresía actual está vencida o por vencer, extender desde hoy
-                if (membresia.getFechaFin() == null || membresia.getFechaFin().isBefore(hoy.plusDays(5))) {
+
+                if (membresia.getFechaFin() == null) {
+                    // Sin fecha previa: usar hoy como base
                     membresia.setFechaInicio(hoy);
-                    membresia.setFechaFin(fechaFin);
+                    membresia.setFechaFin(hoy.plusMonths(1));
+                } else if (!membresia.getFechaFin().isBefore(hoy)) {
+                    // Membresía aún vigente: no cambiar fechas, solo activar
+                    log.info("✅ Membresía vigente activada para {} - Sigue hasta: {}",
+                            estudiante.getNombreCompleto(), membresia.getFechaFin());
+                } else {
+                    // Membresía vencida: extender desde la fechaFin original (no desde hoy)
+                    // Ej: vencía 10/04, pagó 16/04 → nueva fechaFin = 10/05 (no 16/05)
+                    LocalDate baseExtencion = membresia.getFechaFin();
+                    membresia.setFechaFin(baseExtencion.plusMonths(1));
+                    log.info("✅ Membresía extendida para {} - Base: {} → Nueva fechaFin: {}",
+                            estudiante.getNombreCompleto(), baseExtencion, membresia.getFechaFin());
                 }
-                
+
                 membresiaRepository.save(membresia);
-                log.info("✅ Membresía ACTIVADA para estudiante {} - Válida hasta: {}", 
-                    estudiante.getNombreCompleto(), fechaFin);
+                log.info("✅ Membresía ACTIVADA para estudiante {} - Válida hasta: {}",
+                        estudiante.getNombreCompleto(), membresia.getFechaFin());
             } else {
-                // No tiene membresía, crear una nueva
+                // No tiene membresía, crear una nueva desde hoy
                 Membresia nuevaMembresia = new Membresia();
                 nuevaMembresia.setEstudiante(estudiante);
                 nuevaMembresia.setFechaInicio(hoy);
-                nuevaMembresia.setFechaFin(fechaFin);
+                nuevaMembresia.setFechaFin(hoy.plusMonths(1));
                 nuevaMembresia.setEstado(true);
-                
+
                 membresiaRepository.save(nuevaMembresia);
-                log.info("✅ Nueva membresía CREADA para estudiante {} - Válida hasta: {}", 
-                    estudiante.getNombreCompleto(), fechaFin);
+                log.info("✅ Nueva membresía CREADA para estudiante {} - Válida hasta: {}",
+                        estudiante.getNombreCompleto(), nuevaMembresia.getFechaFin());
             }
         } catch (Exception e) {
             log.error("❌ Error activando membresía para estudiante {}: {}",
-                estudiante.getIdEstudiante(), e.getMessage(), e);
+                    estudiante.getIdEstudiante(), e.getMessage(), e);
         }
     }
 

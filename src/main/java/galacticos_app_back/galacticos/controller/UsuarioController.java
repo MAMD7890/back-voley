@@ -8,6 +8,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -18,6 +19,7 @@ public class UsuarioController {
     @Autowired
     private UsuarioService usuarioService;
     
+    // ADMIN ve todos (activos e inactivos); el controlador ya exige ADMIN en clase
     @GetMapping
     public ResponseEntity<List<Usuario>> obtenerTodos() {
         return ResponseEntity.ok(usuarioService.obtenerTodos());
@@ -48,6 +50,21 @@ public class UsuarioController {
         return actualizado != null ? ResponseEntity.ok(actualizado) : ResponseEntity.notFound().build();
     }
     
+    @PatchMapping("/{id}/desactivar")
+    public ResponseEntity<Map<String, Object>> desactivar(@PathVariable Integer id) {
+        try {
+            Usuario desactivado = usuarioService.desactivar(id);
+            return ResponseEntity.ok(Map.of(
+                "mensaje", "Usuario desactivado correctamente",
+                "idUsuario", desactivado.getIdUsuario(),
+                "email", desactivado.getEmail(),
+                "estado", desactivado.getEstado()
+            ));
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> eliminar(@PathVariable Integer id) {
         usuarioService.eliminar(id);
