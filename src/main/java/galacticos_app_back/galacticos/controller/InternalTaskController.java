@@ -121,6 +121,37 @@ public class InternalTaskController {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    //  CORRECCIÓN PUNTUAL: reconciliar fechas de membresía con pagos reales
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Revisa cada membresía activa y compara su duración con los pagos APROBADOS
+     * encontrados en su rango. Si los pagos cubren más meses que los registrados,
+     * extiende la fechaFin y pone al estudiante en AL_DIA.
+     *
+     * Caso típico: Wompi registró $150.000 (2 meses) pero la membresía solo muestra 1 mes.
+     *
+     * POST /api/internal/membresias/reconciliar
+     */
+    @PostMapping("/membresias/reconciliar")
+    public ResponseEntity<Map<String, Object>> reconciliarMembresias(HttpServletRequest request) {
+        if (!esValida(request)) return respuestaNoAutorizada();
+
+        log.info("🔄 [LAMBDA] Reconciliación pagos-membresías desde IP: {}", request.getRemoteAddr());
+
+        try {
+            Map<String, Object> resultado = tareasInternasService.reconciliarPagosConMembresias();
+            return ResponseEntity.ok(resultado);
+        } catch (Exception e) {
+            log.error("❌ Error en reconciliación: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                "error", e.getMessage(),
+                "timestamp", LocalDateTime.now().toString()
+            ));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     //  HEALTH CHECK
     // ─────────────────────────────────────────────────────────────────
 

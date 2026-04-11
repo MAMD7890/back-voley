@@ -1957,13 +1957,25 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
         }
 
         try {
-            List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
             LocalDate hoy = LocalDate.now(ZONA_COLOMBIA);
 
             // Limpiar flag de cambio manual ya que se confirmó un pago real
             estudiante.setCambiadoManualmente(false);
             estudiante.setFechaLimiteCompromiso(null);
             estudianteRepository.save(estudiante);
+
+            // Identificar el pago más reciente PAGADO → determina cuántos meses compra
+            Optional<Pago> nuevoPagoOpt = pagoRepository
+                    .findUltimoPagoByEstudiante(estudiante.getIdEstudiante())
+                    .stream()
+                    .filter(p -> p.getEstadoPago() == Pago.EstadoPago.PAGADO)
+                    .findFirst();
+            int mesesNuevoPago = nuevoPagoOpt
+                    .map(p -> calcularMesesPorMonto(p.getValor()))
+                    .orElse(1);
+            if (mesesNuevoPago == 0) mesesNuevoPago = 1; // fallback conservador
+
+            List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
 
             if (membresias != null && !membresias.isEmpty()) {
                 // Tomar la membresía más reciente por fechaFin
@@ -1974,34 +1986,59 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
 
                 membresia.setEstado(true);
 
-                if (membresia.getFechaFin() == null) {
-                    // Sin fecha previa: usar hoy como base
+                LocalDate fechaInicio = membresia.getFechaInicio();
+                LocalDate fechaFin    = membresia.getFechaFin();
+
+                if (fechaInicio == null || fechaFin == null) {
+                    // Sin fechas previas: período desde hoy
                     membresia.setFechaInicio(hoy);
-                    membresia.setFechaFin(hoy.plusMonths(1));
-                } else if (!membresia.getFechaFin().isBefore(hoy)) {
-                    // Membresía aún vigente: no cambiar fechas, solo activar
-                    log.info("✅ Membresía vigente activada para {} - Sigue hasta: {}",
+                    membresia.setFechaFin(hoy.plusMonths(mesesNuevoPago));
+                    log.info("✅ Membresía sin fechas → nueva desde hoy para {} hasta {}",
                             estudiante.getNombreCompleto(), membresia.getFechaFin());
                 } else {
-                    // Membresía vencida: extender desde la fechaFin original (no desde hoy)
-                    // Ej: vencía 10/04, pagó 16/04 → nueva fechaFin = 10/05 (no 16/05)
-                    LocalDate baseExtencion = membresia.getFechaFin();
-                    membresia.setFechaFin(baseExtencion.plusMonths(1));
-                    log.info("✅ Membresía extendida para {} - Base: {} → Nueva fechaFin: {}",
-                            estudiante.getNombreCompleto(), baseExtencion, membresia.getFechaFin());
+                    // Buscar pagos previos en el rango de la membresía (excluyendo el nuevo pago)
+                    LocalDate desde = fechaInicio.minusDays(30);
+                    LocalDate hasta = fechaFin.plusDays(5);
+                    List<Pago> pagosEnRango = pagoRepository.findPagosAprobadosEnRango(
+                            estudiante.getIdEstudiante(), desde, hasta, java.math.BigDecimal.ZERO);
+
+                    Integer idNuevoPago = nuevoPagoOpt.map(Pago::getIdPago).orElse(-1);
+                    int mesesExistentes = pagosEnRango.stream()
+                            .filter(p -> !p.getIdPago().equals(idNuevoPago))
+                            .mapToInt(p -> calcularMesesPorMonto(p.getValor()))
+                            .sum();
+
+                    int mesesPeriodoActual = calcularMesesPeriodo(fechaInicio, fechaFin);
+
+                    if (mesesExistentes >= mesesPeriodoActual) {
+                        // Período ya cubierto → nuevo pago abre el siguiente período
+                        LocalDate nuevaFechaInicio = fechaFin;
+                        LocalDate nuevaFechaFin    = nuevaFechaInicio.plusMonths(mesesNuevoPago);
+                        membresia.setFechaInicio(nuevaFechaInicio);
+                        membresia.setFechaFin(nuevaFechaFin);
+                        log.info("✅ Período cubierto → siguiente período para {} | {} → {}",
+                                estudiante.getNombreCompleto(), nuevaFechaInicio, nuevaFechaFin);
+                    } else {
+                        // Período no cubierto → nuevo pago extiende el período actual
+                        int totalMeses  = mesesExistentes + mesesNuevoPago;
+                        LocalDate nuevaFechaFin = fechaInicio.plusMonths(totalMeses);
+                        membresia.setFechaFin(nuevaFechaFin);
+                        log.info("✅ Período extendido para {} → fechaFin: {} ({}+{} meses desde {})",
+                                estudiante.getNombreCompleto(), nuevaFechaFin,
+                                mesesExistentes, mesesNuevoPago, fechaInicio);
+                    }
                 }
 
                 membresiaRepository.save(membresia);
                 log.info("✅ Membresía ACTIVADA para estudiante {} - Válida hasta: {}",
                         estudiante.getNombreCompleto(), membresia.getFechaFin());
             } else {
-                // No tiene membresía, crear una nueva desde hoy
+                // No tiene membresía → crear una nueva desde hoy
                 Membresia nuevaMembresia = new Membresia();
                 nuevaMembresia.setEstudiante(estudiante);
                 nuevaMembresia.setFechaInicio(hoy);
-                nuevaMembresia.setFechaFin(hoy.plusMonths(1));
+                nuevaMembresia.setFechaFin(hoy.plusMonths(mesesNuevoPago));
                 nuevaMembresia.setEstado(true);
-
                 membresiaRepository.save(nuevaMembresia);
                 log.info("✅ Nueva membresía CREADA para estudiante {} - Válida hasta: {}",
                         estudiante.getNombreCompleto(), nuevaMembresia.getFechaFin());
@@ -2010,6 +2047,33 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             log.error("❌ Error activando membresía para estudiante {}: {}",
                     estudiante.getIdEstudiante(), e.getMessage(), e);
         }
+    }
+
+    /**
+     * Convierte un monto de pago en la cantidad de meses de membresía que representa.
+     * Precios fijos con 10 % de tolerancia hacia abajo:
+     *   $210.000 × 0.90 = $189.000 mín → 3 meses
+     *   $150.000 × 0.90 = $135.000 mín → 2 meses
+     *    $80.000 × 0.90 =  $72.000 mín → 1 mes
+     */
+    private int calcularMesesPorMonto(java.math.BigDecimal monto) {
+        if (monto == null) return 0;
+        if (monto.compareTo(new java.math.BigDecimal("189000")) >= 0) return 3;
+        if (monto.compareTo(new java.math.BigDecimal("135000")) >= 0) return 2;
+        if (monto.compareTo(new java.math.BigDecimal("72000"))  >= 0) return 1;
+        return 0;
+    }
+
+    /**
+     * Calcula cuántos meses-membresía cubre el rango fechaInicio → fechaFin.
+     * Usa los mismos tramos que calcularValorMinimoMembresia en TareasInternasService.
+     */
+    private int calcularMesesPeriodo(LocalDate fechaInicio, LocalDate fechaFin) {
+        long dias = java.time.temporal.ChronoUnit.DAYS.between(fechaInicio, fechaFin);
+        if (dias <= 35) return 1;
+        if (dias <= 65) return 2;
+        if (dias <= 95) return 3;
+        return (int) Math.round(dias / 30.0);
     }
 
     /**

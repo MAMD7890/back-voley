@@ -88,7 +88,7 @@ public class TareasInternasService {
         log.info("🔧 Fase 0 - Corrección de inconsistencias...");
         List<Estudiante> todosActivos = estudianteRepository.findByEstado(true);
         for (Estudiante estudiante : todosActivos) {
-            if (Boolean.TRUE.equals(estudiante.getCambiadoManualmente())) continue;
+            // COMPROMISO_PAGO se maneja exclusivamente en Fase 3
             if (estudiante.getEstadoPago() == Estudiante.EstadoPago.COMPROMISO_PAGO) continue;
 
             try {
@@ -99,11 +99,17 @@ public class TareasInternasService {
                         .orElse(null);
 
                 boolean tieneAlgunaReal = mems.stream().anyMatch(m -> Boolean.TRUE.equals(m.getEstado()));
+                boolean cambioManual = Boolean.TRUE.equals(estudiante.getCambiadoManualmente());
+
+                // cambiadoManualmente solo se respeta mientras la membresía esté vigente.
+                // Si ya venció (o no tiene membresía), se ignora el flag y se aplican reglas normales.
+                boolean membresiaVigente = reciente != null && !reciente.getFechaFin().isBefore(hoy);
+                if (cambioManual && membresiaVigente) continue;
 
                 if (reciente != null
                         && !reciente.getFechaFin().isBefore(hoy)
                         && membresiaRespaldadaPorPago(reciente)) {
-                    // Tiene membresía activa vigente con pago real → debe ser AL_DIA
+                    // Membresía activa con pago real → AL_DIA
                     if (estudiante.getEstadoPago() != Estudiante.EstadoPago.AL_DIA) {
                         log.info("   🔧 {} corregido: {} → AL_DIA (membresía vigente hasta {}, pago verificado)",
                                 estudiante.getNombreCompleto(), estudiante.getEstadoPago(), reciente.getFechaFin());
@@ -162,11 +168,10 @@ public class TareasInternasService {
                     omitidos++;
                     continue;
                 }
-                if (Boolean.TRUE.equals(estudiante.getCambiadoManualmente())) {
-                    omitidos++;
-                    continue;
-                }
+                // La membresía en Fase 1 ya venció (fechaFin < hoy), por lo tanto
+                // cambiadoManualmente se ignora: el vencimiento tiene prioridad sobre el cambio manual.
                 estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                estudiante.setCambiadoManualmente(false);
                 estudianteRepository.save(estudiante);
                 actualizados++;
                 log.info("   🔴 {} → EN_MORA (vencía: {})",
@@ -555,6 +560,127 @@ public class TareasInternasService {
         // 10% de tolerancia hacia abajo
         return precioExacto.multiply(new java.math.BigDecimal("0.90"))
                            .setScale(0, java.math.RoundingMode.FLOOR);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  RECONCILIACIÓN PAGOS ↔ MEMBRESÍAS (corrección histórica)
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Revisa cada membresía activa (estado=true) y compara su duración con la suma
+     * de meses que representan los pagos APROBADOS encontrados en su rango.
+     *
+     * Regla: si los pagos cubren MÁS meses de los que muestra la membresía, se extiende
+     * la fechaFin y el estudiante queda AL_DIA. Nunca se reduce una membresía.
+     *
+     * Caso típico: Wompi registró $150.000 (2 meses) pero la membresía solo tenía 1 mes.
+     *
+     * Se invoca vía Lambda una sola vez (o cuando se detecte data sucia).
+     * POST /api/internal/membresias/reconciliar
+     */
+    @Transactional
+    public Map<String, Object> reconciliarPagosConMembresias() {
+        LocalDate hoy = LocalDate.now();
+        log.info("🔄 ====== RECONCILIACIÓN PAGOS-MEMBRESÍAS - {} ======", hoy.format(FORMATTER));
+
+        int extendidas = 0;
+        int sinCambio  = 0;
+        int sinPago    = 0;
+        int errores    = 0;
+
+        List<Membresia> membresiasActivas = membresiaRepository.findByEstado(true).stream()
+                .filter(m -> Boolean.TRUE.equals(m.getEstudiante().getEstado()))
+                .filter(m -> m.getFechaInicio() != null && m.getFechaFin() != null)
+                .collect(java.util.stream.Collectors.toList());
+
+        log.info("📋 Membresías activas a revisar: {}", membresiasActivas.size());
+
+        for (Membresia membresia : membresiasActivas) {
+            Estudiante estudiante = membresia.getEstudiante();
+            try {
+                LocalDate desde = membresia.getFechaInicio().minusDays(30);
+                LocalDate hasta = membresia.getFechaFin().plusDays(5);
+
+                List<galacticos_app_back.galacticos.entity.Pago> pagos = pagoRepository
+                        .findPagosAprobadosEnRango(estudiante.getIdEstudiante(),
+                                desde, hasta, java.math.BigDecimal.ZERO);
+
+                if (pagos.isEmpty()) {
+                    log.warn("   ⚠️ {} – membresía {} sin pagos en rango [{} → {}]",
+                            estudiante.getNombreCompleto(), membresia.getIdMembresia(), desde, hasta);
+                    sinPago++;
+                    continue;
+                }
+
+                int totalMeses = pagos.stream()
+                        .mapToInt(p -> calcularMesesPorMontoInterno(p.getValor()))
+                        .sum();
+
+                int mesesPeriodoActual = calcularMesesPeriodoInterno(
+                        membresia.getFechaInicio(), membresia.getFechaFin());
+
+                if (totalMeses > mesesPeriodoActual) {
+                    LocalDate nuevaFechaFin = membresia.getFechaInicio().plusMonths(totalMeses);
+                    log.info("   🔄 {} | {} → {} (pagos={}m, período={}m)",
+                            estudiante.getNombreCompleto(),
+                            membresia.getFechaFin(), nuevaFechaFin,
+                            totalMeses, mesesPeriodoActual);
+                    membresia.setFechaFin(nuevaFechaFin);
+                    membresiaRepository.save(membresia);
+
+                    // Si la extensión supera hoy → poner AL_DIA
+                    if (!nuevaFechaFin.isBefore(hoy)
+                            && estudiante.getEstadoPago() != Estudiante.EstadoPago.AL_DIA) {
+                        log.info("   ✅ {} → AL_DIA (membresía extendida hasta {})",
+                                estudiante.getNombreCompleto(), nuevaFechaFin);
+                        estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                        estudiante.setCambiadoManualmente(false);
+                        estudianteRepository.save(estudiante);
+                    }
+                    extendidas++;
+                } else {
+                    sinCambio++;
+                }
+            } catch (Exception e) {
+                errores++;
+                log.error("   ❌ Error reconciliando membresía {} – estudiante {}: {}",
+                        membresia.getIdMembresia(), estudiante.getIdEstudiante(), e.getMessage());
+            }
+        }
+
+        log.info("📊 Reconciliación: {} extendidas, {} sin cambio, {} sin pago, {} errores",
+                extendidas, sinCambio, sinPago, errores);
+
+        Map<String, Object> resultado = new HashMap<>();
+        resultado.put("tarea", "reconciliacion_pagos_membresias");
+        resultado.put("fecha", hoy.toString());
+        resultado.put("extendidas", extendidas);
+        resultado.put("sinCambio", sinCambio);
+        resultado.put("sinPago", sinPago);
+        resultado.put("errores", errores);
+        resultado.put("timestamp", LocalDateTime.now().toString());
+        return resultado;
+    }
+
+    /**
+     * Convierte un monto de pago en la cantidad de meses que representa.
+     * Precios fijos con 10 % de tolerancia: $189k → 3m | $135k → 2m | $72k → 1m
+     */
+    private int calcularMesesPorMontoInterno(java.math.BigDecimal monto) {
+        if (monto == null) return 0;
+        if (monto.compareTo(new java.math.BigDecimal("189000")) >= 0) return 3;
+        if (monto.compareTo(new java.math.BigDecimal("135000")) >= 0) return 2;
+        if (monto.compareTo(new java.math.BigDecimal("72000"))  >= 0) return 1;
+        return 0;
+    }
+
+    /** Calcula cuántos meses-membresía cubre el rango fechaInicio → fechaFin. */
+    private int calcularMesesPeriodoInterno(LocalDate fechaInicio, LocalDate fechaFin) {
+        long dias = java.time.temporal.ChronoUnit.DAYS.between(fechaInicio, fechaFin);
+        if (dias <= 35) return 1;
+        if (dias <= 65) return 2;
+        if (dias <= 95) return 3;
+        return (int) Math.round(dias / 30.0);
     }
 
     // ─────────────────────────────────────────────────────────────────
