@@ -18,8 +18,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import jakarta.persistence.EntityManager;
-
 import galacticos_app_back.galacticos.dto.ActualizarEstudianteDTO;
 import galacticos_app_back.galacticos.dto.CambioEstadoPagoDTO;
 import galacticos_app_back.galacticos.dto.CambioPasswordEstudianteDTO;
@@ -39,6 +37,7 @@ import galacticos_app_back.galacticos.repository.MembresiaRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
 import galacticos_app_back.galacticos.repository.SedeRepository;
 import galacticos_app_back.galacticos.repository.UsuarioRepository;
+import jakarta.persistence.EntityManager;
 
 @Service
 public class EstudianteService {
@@ -1375,7 +1374,7 @@ public class EstudianteService {
     }
     
     /**
-     * Convierte un Estudiante a EstudianteConEstadoPagoDTO con información del último pago
+     * Convierte un Estudiante a EstudianteConEstadoPagoDTO con información del último pago y membresía activa
      */
     private EstudianteConEstadoPagoDTO convertirAEstudianteConEstadoPago(Estudiante estudiante) {
         EstudianteConEstadoPagoDTO dto = EstudianteConEstadoPagoDTO.fromEntity(estudiante);
@@ -1386,6 +1385,28 @@ public class EstudianteService {
             Pago ultimoPago = ultimosPagos.get(0);
             dto.setFechaUltimoPago(ultimoPago.getFechaPago());
             dto.setMesUltimoPago(ultimoPago.getMesPagado());
+        }
+        
+        // Agregar información de membresía activa
+        List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
+        if (!membresias.isEmpty()) {
+            // Buscar membresía activa (estado = true)
+            Membresia membresiaActiva = membresias.stream()
+                    .filter(m -> m.getEstado() != null && m.getEstado())
+                    .findFirst()
+                    .orElse(null);
+            
+            if (membresiaActiva != null) {
+                dto.setIdMembresia(membresiaActiva.getIdMembresia());
+                dto.setEquipoMembresia(membresiaActiva.getEquipo() != null ? membresiaActiva.getEquipo().getNombre() : null);
+                dto.setFechaInicioMembresia(membresiaActiva.getFechaInicio());
+                dto.setFechaFinMembresia(membresiaActiva.getFechaFin());
+                dto.setMembresiaActiva(true);
+            } else {
+                dto.setMembresiaActiva(false);
+            }
+        } else {
+            dto.setMembresiaActiva(false);
         }
         
         return dto;

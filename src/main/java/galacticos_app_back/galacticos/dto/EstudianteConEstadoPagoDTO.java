@@ -1,12 +1,12 @@
 package galacticos_app_back.galacticos.dto;
 
+import java.time.LocalDate;
+
 import galacticos_app_back.galacticos.entity.Estudiante;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-
-import java.time.LocalDate;
 
 /**
  * DTO que incluye información del estudiante con su estado de pago
@@ -43,6 +43,13 @@ public class EstudianteConEstadoPagoDTO {
     // Información del último pago (opcional)
     private LocalDate fechaUltimoPago;
     private String mesUltimoPago;
+    
+    // Información de membresía activa (opcional)
+    private Integer idMembresia;
+    private String equipoMembresia;
+    private LocalDate fechaInicioMembresia;
+    private LocalDate fechaFinMembresia;
+    private Boolean membresiaActiva;
     
     /**
      * Crea un DTO a partir de una entidad Estudiante
