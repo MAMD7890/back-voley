@@ -1538,7 +1538,6 @@ public class EstudianteService {
  * 4. Validación previa del rol ESTUDIANTE
  * 5. Verificación de persistencia
  */
-@Transactional
 public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
         java.io.InputStream inputStream,
         Integer sedeId,
@@ -1597,7 +1596,7 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                         .build());
             }
         }
-        
+
         // ============ REGISTRAR AUDITORÍA ============
         registrarAuditoriaImportacion(sedeId, exitosos, errores, totalFilas, nombreArchivo);
         
