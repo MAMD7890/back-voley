@@ -7,11 +7,12 @@ import galacticos_app_back.galacticos.service.WompiService;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -511,17 +512,59 @@ public class WompiController {
     @PostMapping("/sincronizar-estados")
     public ResponseEntity<Map<String, Object>> sincronizarEstadosConPagos() {
         log.info("🔄 Iniciando sincronización de estados con pagos confirmados");
-        
+
         try {
             Map<String, Object> resultado = wompiService.sincronizarEstadosConPagos();
-            
-            log.info("✅ Sincronización completada - Actualizados a AL_DIA: {}, Membresías activadas: {}", 
+
+            log.info("✅ Sincronización completada - Actualizados a AL_DIA: {}, Membresías activadas: {}",
                 resultado.get("estudiantesActualizadosAAlDia"), resultado.get("membresiasActivadas"));
-            
+
             return ResponseEntity.ok(resultado);
-            
+
         } catch (Exception e) {
             log.error("❌ Error sincronizando estados: {}", e.getMessage(), e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", "Error: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(error);
+        }
+    }
+
+    /**
+     * Recupera pagos APPROVED de Wompi que nunca se registraron en la BD.
+     * Recorre TODAS las páginas del rango indicado hasta agotar los resultados.
+     *
+     * Query params opcionales:
+     * - desde: fecha inicio (yyyy-MM-dd). Por defecto: hace 90 días.
+     * - hasta: fecha fin   (yyyy-MM-dd). Por defecto: hoy.
+     *
+     * POST /api/wompi/recuperar-pagos?desde=2026-01-01&hasta=2026-04-25
+     *
+     * Response:
+     * {
+     *   "rangoDesde": "2026-01-01",
+     *   "rangoHasta": "2026-04-25",
+     *   "totalConsultadas": 320,
+     *   "yaRegistradas": 310,
+     *   "pagosCreados": 7,
+     *   "pagosActualizados": 2,
+     *   "sinMatchEstudiante": 1,
+     *   "errores": 0,
+     *   "detalles": [...]
+     * }
+     */
+    @PostMapping("/recuperar-pagos")
+    public ResponseEntity<Map<String, Object>> recuperarPagosFaltantes(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta) {
+
+        log.info("🔍 Recuperando pagos faltantes de Wompi — desde: {}, hasta: {}", desde, hasta);
+
+        try {
+            Map<String, Object> resultado = wompiService.recuperarPagosFaltantes(desde, hasta);
+            return ResponseEntity.ok(resultado);
+        } catch (Exception e) {
+            log.error("❌ Error recuperando pagos: {}", e.getMessage(), e);
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
             error.put("message", "Error: " + e.getMessage());

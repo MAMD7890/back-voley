@@ -71,6 +71,22 @@ public class AsistenciaEstudianteService {
     }
     
     public AsistenciaEstudiante crear(AsistenciaEstudiante asistencia) {
+        // Si ya existe un registro para ese estudiante y fecha, actualizar en lugar de duplicar
+        if (asistencia.getEstudiante() != null && asistencia.getFecha() != null) {
+            List<AsistenciaEstudiante> existentes = asistenciaEstudianteRepository
+                    .findByEstudianteIdEstudianteAndFecha(
+                            asistencia.getEstudiante().getIdEstudiante(),
+                            asistencia.getFecha());
+            if (!existentes.isEmpty()) {
+                AsistenciaEstudiante existente = existentes.get(0);
+                existente.setAsistio(asistencia.getAsistio());
+                existente.setObservaciones(asistencia.getObservaciones());
+                if (asistencia.getEquipo() != null) {
+                    existente.setEquipo(asistencia.getEquipo());
+                }
+                return asistenciaEstudianteRepository.save(existente);
+            }
+        }
         return asistenciaEstudianteRepository.save(asistencia);
     }
     

@@ -9,8 +9,6 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.DateUtil;
@@ -20,15 +18,9 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import galacticos_app_back.galacticos.dto.ExcelEstudianteImportDTO;
-import galacticos_app_back.galacticos.entity.Estudiante;
-import galacticos_app_back.galacticos.entity.Sede;
-import galacticos_app_back.galacticos.repository.EstudianteRepository;
-import galacticos_app_back.galacticos.repository.SedeRepository;
 
 /**
  * Servicio para importar estudiantes desde archivos Excel
@@ -37,13 +29,7 @@ import galacticos_app_back.galacticos.repository.SedeRepository;
 public class ExcelImportService {
     
     private static final Logger logger = LoggerFactory.getLogger(ExcelImportService.class);
-    
-    @Autowired
-    private SedeRepository sedeRepository;
-    
-    @Autowired
-    private EstudianteRepository estudianteRepository;
-    
+
     // Mapeo de nombres de columnas del Excel a índices
     private static final Map<String, Integer> COLUMN_INDEX_MAP = new HashMap<>();
     
@@ -707,26 +693,14 @@ public class ExcelImportService {
                 "Tipo Sangre",
                 "Alergias",
                 "Enfermedades/Condiciones",
-                "Medicamentos",
-                "Certificado Medico Deportivo (Si/No)",
                 "Dia Pago Mes",
                 "Nombre Emergencia",
                 "Telefono Emergencia",
                 "Parentesco Emergencia",
-                "Ocupacion Emergencia",
-                "Correo Emergencia",
-                "Pertenece LGBTIQ (Si/No)",
                 "Persona Discapacidad (Si/No)",
                 "Condicion Discapacidad",
                 "Migrante/Refugiado (Si/No)",
                 "Poblacion Etnica",
-                "Religion",
-                "Experiencia Voleibol",
-                "Otras Disciplinas",
-                "Posicion Preferida",
-                "Dominancia",
-                "Nivel Actual",
-                "Clubes Anteriores",
                 "Estado Pago"
             };
             

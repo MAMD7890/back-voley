@@ -53,11 +53,12 @@ public class UsuarioService {
         if (existente.isPresent()) {
             usuario.setIdUsuario(id);
             // Encriptar password si viene en texto plano y ha cambiado
-            if (usuario.getPassword() != null && !usuario.getPassword().startsWith("$2a$")) {
-                usuario.setPassword(passwordEncoder.encode(usuario.getPassword()));
-            } else if (usuario.getPassword() == null) {
-                // Mantener el password existente si no se proporciona uno nuevo
+            if (usuario.getPassword() == null || usuario.getPassword().isBlank()) {
+                // No se proporcionó contraseña nueva → conservar la existente
                 usuario.setPassword(existente.get().getPassword());
+            } else if (!usuario.getPassword().startsWith("$2a$")) {
+                // Viene en texto plano → encriptar
+                usuario.setPassword(passwordEncoder.encode(usuario.getPassword()));
             }
             return usuarioRepository.save(usuario);
         }

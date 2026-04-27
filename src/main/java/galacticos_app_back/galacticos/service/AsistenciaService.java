@@ -63,11 +63,28 @@ public class AsistenciaService {
             }
 
             LocalDate fecha = r.getFechaHora().toLocalDate();
-            boolean exists = asistenciaRepository.existsByEstudianteAndFecha(e, fecha);
-            if (exists) {
+            Optional<Asistencia> existing = asistenciaRepository.findByEstudianteAndFecha(e, fecha);
+            boolean debeAsistir = r.getAsistio();
+
+            if (!debeAsistir) {
+                // Si se desmarca la asistencia, eliminar el registro si existe
+                if (existing.isPresent()) {
+                    asistenciaRepository.delete(existing.get());
+                    res.setAlreadyMarked(false);
+                    res.setSaved(true);
+                } else {
+                    res.setAlreadyMarked(false);
+                    res.setSaved(false);
+                }
+            } else if (existing.isPresent()) {
+                // Ya existe: actualizar fechaHora para reflejar la corrección
+                Asistencia a = existing.get();
+                a.setFechaHora(r.getFechaHora());
+                asistenciaRepository.save(a);
                 res.setAlreadyMarked(true);
-                res.setSaved(false);
+                res.setSaved(true);
             } else {
+                // No existe: crear nuevo registro
                 Asistencia a = new Asistencia();
                 a.setEstudiante(e);
                 a.setFecha(fecha);

@@ -41,13 +41,9 @@ public class ActualizarEstudianteDTO {
     private String tipoSangre;
     
     private String alergias;
-    
+
     private String enfermedadesCondiciones;
-    
-    private String medicamentos;
-    
-    private Boolean certificadoMedicoDeportivo;
-    
+
     // Datos del tutor
     @Size(max = 200, message = "El nombre del tutor no puede exceder 200 caracteres")
     private String nombreTutor;

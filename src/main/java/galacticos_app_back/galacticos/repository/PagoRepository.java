@@ -2,6 +2,7 @@ package galacticos_app_back.galacticos.repository;
 
 import galacticos_app_back.galacticos.entity.Pago;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -12,7 +13,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-public interface PagoRepository extends JpaRepository<Pago, Integer> {
+public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecificationExecutor<Pago> {
     List<Pago> findByEstudianteIdEstudiante(Integer idEstudiante);
     List<Pago> findByEstadoPago(Pago.EstadoPago estado);
     List<Pago> findByFechaPagoBetween(LocalDate desde, LocalDate hasta);

@@ -7,10 +7,12 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface AsistenciaRepository extends JpaRepository<Asistencia, Integer> {
     boolean existsByEstudianteAndFecha(Estudiante estudiante, LocalDate fecha);
+    Optional<Asistencia> findByEstudianteAndFecha(Estudiante estudiante, LocalDate fecha);
     List<Asistencia> findByEstudianteIdEstudianteOrderByFechaDesc(Integer idEstudiante);
     List<Asistencia> findByFecha(LocalDate fecha);
 }

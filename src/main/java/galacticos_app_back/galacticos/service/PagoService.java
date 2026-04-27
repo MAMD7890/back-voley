@@ -6,11 +6,14 @@ import galacticos_app_back.galacticos.entity.Estudiante;
 import galacticos_app_back.galacticos.entity.Pago;
 import galacticos_app_back.galacticos.repository.EstudianteRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
+import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.JoinType;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -107,11 +110,59 @@ public class PagoService {
     }
     
     /**
-     * Obtiene pagos paginados para el reporte
+     * Obtiene pagos paginados con filtros opcionales:
+     * - desde/hasta: rango de fechaPago
+     * - estado: string exacto comparado con estadoPago (ej: "PAGADO", "PENDIENTE")
+     * - metodo: string exacto comparado con metodoPago (ej: "ONLINE", "EFECTIVO")
+     * - busqueda: coincidencia parcial en nombre, email o referenciaPago
+     * - idSede: id de la sede del estudiante
      */
-    public Page<ReportePagoWompiDTO> obtenerReportePagosPaginado(int page, int size) {
+    public Page<ReportePagoWompiDTO> obtenerReportePagosPaginado(
+            int page, int size,
+            LocalDate desde, LocalDate hasta,
+            String estado, String metodo, String busqueda, Integer idSede) {
+
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "fechaPago", "horaPago"));
-        Page<Pago> pagos = pagoRepository.findAll(pageable);
+
+        Specification<Pago> spec = (root, query, cb) -> cb.conjunction();
+
+        if (desde != null) {
+            spec = spec.and((root, query, cb) ->
+                    cb.greaterThanOrEqualTo(root.get("fechaPago"), desde));
+        }
+        if (hasta != null) {
+            spec = spec.and((root, query, cb) ->
+                    cb.lessThanOrEqualTo(root.get("fechaPago"), hasta));
+        }
+        if (estado != null && !estado.isBlank()) {
+            spec = spec.and((root, query, cb) ->
+                    cb.equal(root.get("estadoPago").as(String.class), estado.toUpperCase()));
+        }
+        if (metodo != null && !metodo.isBlank()) {
+            spec = spec.and((root, query, cb) ->
+                    cb.equal(root.get("metodoPago").as(String.class), metodo.toUpperCase()));
+        }
+        if (busqueda != null && !busqueda.isBlank()) {
+            String pattern = "%" + busqueda.toLowerCase() + "%";
+            spec = spec.and((root, query, cb) -> {
+                query.distinct(true);
+                Join<Pago, Estudiante> est = root.join("estudiante", JoinType.LEFT);
+                return cb.or(
+                        cb.like(cb.lower(est.get("nombreCompleto")), pattern),
+                        cb.like(cb.lower(est.get("correoEstudiante")), pattern),
+                        cb.like(cb.lower(root.get("referenciaPago")), pattern)
+                );
+            });
+        }
+        if (idSede != null) {
+            spec = spec.and((root, query, cb) -> {
+                query.distinct(true);
+                Join<Pago, Estudiante> est = root.join("estudiante", JoinType.LEFT);
+                return cb.equal(est.get("sede").get("idSede"), idSede);
+            });
+        }
+
+        Page<Pago> pagos = pagoRepository.findAll(spec, pageable);
         return pagos.map(this::convertirAPagoWompiDTO);
     }
     
@@ -345,6 +396,10 @@ public class PagoService {
                     case COMPROMISO_PAGO:
                         builder.colorEstadoPago("#17a2b8");
                         builder.descripcionEstadoPago("Compromiso de pago");
+                        break;
+                    case DECLINADO:
+                        builder.colorEstadoPago("#6c757d");
+                        builder.descripcionEstadoPago("Declinado");
                         break;
                 }
             }

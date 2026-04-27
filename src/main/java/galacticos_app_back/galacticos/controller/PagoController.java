@@ -96,13 +96,23 @@ public class PagoController {
     }
     
     /**
-     * Obtiene los pagos con paginación
+     * Obtiene los pagos con paginación y filtros opcionales:
+     * - desde/hasta: rango de fechaPago (formato ISO: yyyy-MM-dd)
+     * - estado: string exacto del estado (PAGADO, PENDIENTE, VENCIDO, RECHAZADO)
+     * - metodo: string exacto del método (ONLINE, EFECTIVO)
+     * - busqueda: coincidencia parcial en nombre, email o referenciaPago
      */
     @GetMapping("/reportes/wompi/paginado")
     public ResponseEntity<Page<ReportePagoWompiDTO>> obtenerReportePagosPaginado(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        return ResponseEntity.ok(pagoService.obtenerReportePagosPaginado(page, size));
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
+            @RequestParam(required = false) String estado,
+            @RequestParam(required = false) String metodo,
+            @RequestParam(required = false) String busqueda,
+            @RequestParam(required = false) Integer idSede) {
+        return ResponseEntity.ok(pagoService.obtenerReportePagosPaginado(page, size, desde, hasta, estado, metodo, busqueda, idSede));
     }
     
     /**

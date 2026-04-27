@@ -307,16 +307,15 @@ public class EstudianteService {
                     continue;
                 }
                 
-                // Verificar si el documento ya existe
+                // Verificar si el documento ya existe — omitir sin contar como error
                 Optional<Estudiante> estudianteExistente = estudianteRepository.findByNumeroDocumento(dto.getNumeroDocumento());
                 if (estudianteExistente.isPresent()) {
                     resultados.add(Map.of(
                         "fila", dto.getNumeroFila(),
                         "nombre", dto.getNombreCompleto(),
-                        "estado", "ERROR",
-                        "mensaje", "El número de documento ya está registrado"
+                        "estado", "OMITIDO",
+                        "mensaje", "El número de documento ya está registrado, estudiante omitido"
                     ));
-                    errores++;
                     continue;
                 }
                 
@@ -621,68 +620,29 @@ public class EstudianteService {
         
         // Información médica
         estudiante.setEps(sanitizarTexto(dto.getEps(), 100));
-        // Sanitizar tipoSangre: truncar a 20 caracteres máximo y limpiar
         String tipoSangreRaw = dto.getTipoSangre();
         if (tipoSangreRaw != null && !tipoSangreRaw.isEmpty()) {
-            // Truncar a 20 caracteres y hacer trim
-            String tipoSangreLimpio = tipoSangreRaw.trim().length() > 20 
-                ? tipoSangreRaw.trim().substring(0, 20) 
+            String tipoSangreLimpio = tipoSangreRaw.trim().length() > 20
+                ? tipoSangreRaw.trim().substring(0, 20)
                 : tipoSangreRaw.trim();
             estudiante.setTipoSangre(tipoSangreLimpio);
         }
         estudiante.setAlergias(dto.getAlergias());
         estudiante.setEnfermedadesCondiciones(dto.getEnfermedadesCondiciones());
-        estudiante.setMedicamentos(dto.getMedicamentos());
-        estudiante.setCertificadoMedicoDeportivo(dto.getCertificadoMedicoDeportivo() != null ? dto.getCertificadoMedicoDeportivo() : false);
-        
+
         // Día de pago
         estudiante.setDiaPagoMes(dto.getDiaPagoMes());
-        
+
         // Información de emergencia
         estudiante.setNombreEmergencia(sanitizarTexto(dto.getNombreEmergencia(), 200));
-        // Sanitizar teléfono emergencia
         estudiante.setTelefonoEmergencia(sanitizarTelefono(dto.getTelefonoEmergencia(), 20));
         estudiante.setParentescoEmergencia(sanitizarTexto(dto.getParentescoEmergencia(), 50));
-        estudiante.setOcupacionEmergencia(sanitizarTexto(dto.getOcupacionEmergencia(), 100));
-        // Sanitizar email emergencia
-        String emailEmergenciaLimpio = sanitizarEmailAvanzado(dto.getCorreoEmergencia());
-        if (emailEmergenciaLimpio == null || emailEmergenciaLimpio.isEmpty()) {
-            emailEmergenciaLimpio = dto.getCorreoEmergencia();
-        }
-        estudiante.setCorreoEmergencia(sanitizarTexto(emailEmergenciaLimpio, 100));
-        
+
         // Poblaciones vulnerables
-        estudiante.setPertenecelgbtiq(dto.getPerteneceIgbtiq() != null ? dto.getPerteneceIgbtiq() : false);
         estudiante.setPersonaDiscapacidad(dto.getPersonaDiscapacidad() != null ? dto.getPersonaDiscapacidad() : false);
         estudiante.setCondicionDiscapacidad(dto.getCondicionDiscapacidad());
         estudiante.setMigranteRefugiado(dto.getMigranteRefugiado() != null ? dto.getMigranteRefugiado() : false);
         estudiante.setPoblacionEtnica(sanitizarTexto(dto.getPoblacionEtnica(), 100));
-        estudiante.setReligion(sanitizarTexto(dto.getReligion(), 100));
-        
-        // Información deportiva
-        estudiante.setExperienciaVoleibol(dto.getExperienciaVoleibol());
-        estudiante.setOtrasDisciplinas(dto.getOtrasDisciplinas());
-        estudiante.setPosicionPreferida(sanitizarTexto(dto.getPosicionPreferida(), 50));
-        try {
-            if (dto.getDominancia() != null && !dto.getDominancia().isEmpty()) {
-                estudiante.setDominancia(Estudiante.Dominancia.valueOf(dto.getDominancia().toUpperCase()));
-            }
-        } catch (Exception e) {
-            // Ignorar si no es un valor válido
-        }
-        try {
-            if (dto.getNivelActual() != null && !dto.getNivelActual().isEmpty()) {
-                estudiante.setNivelActual(Estudiante.NivelActual.valueOf(dto.getNivelActual().toUpperCase()));
-            }
-        } catch (Exception e) {
-            // Ignorar si no es un valor válido
-        }
-        estudiante.setClubesAnteriores(dto.getClubesAnteriores());
-        
-        // Consentimiento
-        estudiante.setAceptaConsentimiento(dto.getConsentimientoInformado() != null ? dto.getConsentimientoInformado() : false);
-        estudiante.setFirmaDigital(dto.getFirmaDigital());
-        estudiante.setFechaDiligenciamiento(dto.getFechaDiligenciamiento());
         
         // Estado por defecto
         estudiante.setEstado(true);
@@ -780,43 +740,30 @@ public class EstudianteService {
         estudiante.setTipoSangre(estudianteActualizado.getTipoSangre());
         estudiante.setAlergias(estudianteActualizado.getAlergias());
         estudiante.setEnfermedadesCondiciones(estudianteActualizado.getEnfermedadesCondiciones());
-        estudiante.setMedicamentos(estudianteActualizado.getMedicamentos());
-        estudiante.setCertificadoMedicoDeportivo(estudianteActualizado.getCertificadoMedicoDeportivo());
-        
+        // Campos eliminados del nuevo Excel (medicamentos, certificadoMedicoDeportivo): no se tocan para preservar datos existentes en BD
+
         // Día de pago
         estudiante.setDiaPagoMes(estudianteActualizado.getDiaPagoMes());
-        
+
         // Información de emergencia
         estudiante.setNombreEmergencia(estudianteActualizado.getNombreEmergencia());
         estudiante.setTelefonoEmergencia(estudianteActualizado.getTelefonoEmergencia());
         estudiante.setParentescoEmergencia(estudianteActualizado.getParentescoEmergencia());
-        estudiante.setOcupacionEmergencia(estudianteActualizado.getOcupacionEmergencia());
-        estudiante.setCorreoEmergencia(estudianteActualizado.getCorreoEmergencia());
-        
+        // Campos eliminados: ocupacionEmergencia, correoEmergencia — no se actualizan
+
         // Poblaciones vulnerables
-        estudiante.setPertenecelgbtiq(estudianteActualizado.getPertenecelgbtiq());
         estudiante.setPersonaDiscapacidad(estudianteActualizado.getPersonaDiscapacidad());
         estudiante.setCondicionDiscapacidad(estudianteActualizado.getCondicionDiscapacidad());
         estudiante.setMigranteRefugiado(estudianteActualizado.getMigranteRefugiado());
         estudiante.setPoblacionEtnica(estudianteActualizado.getPoblacionEtnica());
-        estudiante.setReligion(estudianteActualizado.getReligion());
-        
-        // Información deportiva
-        estudiante.setExperienciaVoleibol(estudianteActualizado.getExperienciaVoleibol());
-        estudiante.setOtrasDisciplinas(estudianteActualizado.getOtrasDisciplinas());
-        estudiante.setPosicionPreferida(estudianteActualizado.getPosicionPreferida());
-        estudiante.setDominancia(estudianteActualizado.getDominancia());
-        estudiante.setNivelActual(estudianteActualizado.getNivelActual());
-        estudiante.setClubesAnteriores(estudianteActualizado.getClubesAnteriores());
-        
+        // Campos eliminados: pertenecelgbtiq, religion — no se actualizan
+        // Campos eliminados (deportivos): experienciaVoleibol, otrasDisciplinas, posicionPreferida,
+        //   dominancia, nivelActual, clubesAnteriores — no se actualizan
+        // Campos eliminados (consentimiento): aceptaConsentimiento, firmaDigital, fechaDiligenciamiento — no se actualizan
+
         // Camiseta
         estudiante.setNombreCamiseta(estudianteActualizado.getNombreCamiseta());
         estudiante.setNumeroCamiseta(estudianteActualizado.getNumeroCamiseta());
-        
-        // Consentimiento y firma
-        estudiante.setAceptaConsentimiento(estudianteActualizado.getAceptaConsentimiento());
-        estudiante.setFirmaDigital(estudianteActualizado.getFirmaDigital());
-        estudiante.setFechaDiligenciamiento(estudianteActualizado.getFechaDiligenciamiento());
         
         // Fotos
         estudiante.setFotoUrl(estudianteActualizado.getFotoUrl());
@@ -1137,13 +1084,6 @@ public class EstudianteService {
         if (dto.getEnfermedadesCondiciones() != null) {
             estudiante.setEnfermedadesCondiciones(dto.getEnfermedadesCondiciones());
         }
-        if (dto.getMedicamentos() != null) {
-            estudiante.setMedicamentos(dto.getMedicamentos());
-        }
-        if (dto.getCertificadoMedicoDeportivo() != null) {
-            estudiante.setCertificadoMedicoDeportivo(dto.getCertificadoMedicoDeportivo());
-        }
-        
         // Datos del tutor
         if (dto.getNombreTutor() != null) {
             estudiante.setNombreTutor(dto.getNombreTutor());
@@ -1880,7 +1820,7 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
             membresia.setEquipo(null);
             membresia.setFechaInicio(LocalDate.now());
             membresia.setFechaFin(LocalDate.now().plusMonths(1));
-            membresia.setValorMensual(new BigDecimal("50000"));
+            membresia.setValorMensual(new BigDecimal("80000"));
             membresia.setEstado(false);
             
             Membresia membresiaGuardada = membresiaRepository.save(membresia);

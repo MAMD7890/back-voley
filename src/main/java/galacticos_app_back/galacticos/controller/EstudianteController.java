@@ -71,23 +71,35 @@ public class EstudianteController {
     }
     
     @GetMapping("/activos/lista")
-    public ResponseEntity<List<Estudiante>> obtenerActivos() {
-        return ResponseEntity.ok(estudianteService.obtenerActivos());
+    public ResponseEntity<List<EstudianteResponseDTO>> obtenerActivos() {
+        return ResponseEntity.ok(
+            estudianteService.obtenerActivos().stream()
+                .map(EstudianteResponseDTO::fromEntity)
+                .collect(java.util.stream.Collectors.toList())
+        );
     }
-    
+
     @GetMapping("/nivel/{nivel}")
-    public ResponseEntity<List<Estudiante>> obtenerPorNivel(@PathVariable Estudiante.NivelActual nivel) {
-        return ResponseEntity.ok(estudianteService.obtenerPorNivel(nivel));
+    public ResponseEntity<List<EstudianteResponseDTO>> obtenerPorNivel(@PathVariable Estudiante.NivelActual nivel) {
+        return ResponseEntity.ok(
+            estudianteService.obtenerPorNivel(nivel).stream()
+                .map(EstudianteResponseDTO::fromEntity)
+                .collect(java.util.stream.Collectors.toList())
+        );
     }
-    
+
     @GetMapping("/sede/{idSede}")
-    public ResponseEntity<List<Estudiante>> obtenerPorSede(@PathVariable Integer idSede) {
-        return ResponseEntity.ok(estudianteService.obtenerPorSede(idSede));
+    public ResponseEntity<List<EstudianteResponseDTO>> obtenerPorSede(@PathVariable Integer idSede) {
+        return ResponseEntity.ok(
+            estudianteService.obtenerPorSede(idSede).stream()
+                .map(EstudianteResponseDTO::fromEntity)
+                .collect(java.util.stream.Collectors.toList())
+        );
     }
-    
+
     @PostMapping
-    public ResponseEntity<Estudiante> crear(@RequestBody Estudiante estudiante) {
-        return ResponseEntity.ok(estudianteService.crear(estudiante));
+    public ResponseEntity<EstudianteResponseDTO> crear(@RequestBody Estudiante estudiante) {
+        return ResponseEntity.ok(EstudianteResponseDTO.fromEntity(estudianteService.crear(estudiante)));
     }
     
     @PostMapping("/registro")
