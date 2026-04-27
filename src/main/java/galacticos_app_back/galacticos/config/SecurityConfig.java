@@ -49,6 +49,8 @@ public class SecurityConfig {
             "/api/wompi/integrity-signature",
             "/api/wompi/generate-reference",
             "/api/wompi/transaction/**",
+            // Recuperación de pagos: sin JWT, protegido por API Key en el controller
+            "/api/wompi/recuperar-pagos",
             // Recursos estáticos y documentación
             "/uploads/**",
             "/assets/**",

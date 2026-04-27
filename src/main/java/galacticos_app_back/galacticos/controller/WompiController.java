@@ -5,8 +5,10 @@ import galacticos_app_back.galacticos.dto.wompi.*;
 import galacticos_app_back.galacticos.dto.auth.MessageResponse;
 import galacticos_app_back.galacticos.service.WompiService;
 import com.fasterxml.jackson.databind.JsonNode;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,9 +23,14 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Slf4j
 public class WompiController {
-    
+
     private final WompiService wompiService;
     private final WompiConfig wompiConfig;
+
+    @Value("${app.internal.api-key}")
+    private String internalApiKey;
+
+    private static final String API_KEY_HEADER = "X-Internal-Api-Key";
     
     /**
      * Obtiene la llave pública de Wompi para el frontend
@@ -556,7 +563,14 @@ public class WompiController {
     @PostMapping("/recuperar-pagos")
     public ResponseEntity<Map<String, Object>> recuperarPagosFaltantes(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta) {
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
+            HttpServletRequest request) {
+
+        String key = request.getHeader(API_KEY_HEADER);
+        if (key == null || !key.equals(internalApiKey)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("success", false, "message", "No autorizado: API Key inválida o ausente"));
+        }
 
         log.info("🔍 Recuperando pagos faltantes de Wompi — desde: {}, hasta: {}", desde, hasta);
 
