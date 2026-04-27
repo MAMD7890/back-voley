@@ -220,7 +220,7 @@ public class Estudiante {
     }
 
     public enum TipoDocumento {
-        TI, CC, RC, PASAPORTE
+        TI, CC, RC, CE, PASAPORTE, PPT
     }
     
     /**

@@ -2,6 +2,7 @@ package galacticos_app_back.galacticos.service;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -130,13 +131,14 @@ public class ExcelImportService {
         for (int colIndex = 0; colIndex < headerRow.getLastCellNum(); colIndex++) {
             Cell cell = headerRow.getCell(colIndex);
             if (cell != null) {
-                String header = cell.getStringCellValue()
-                    .trim()
+                String header = Normalizer
+                    .normalize(cell.getStringCellValue().trim(), Normalizer.Form.NFD)
+                    .replaceAll("[\\p{InCombiningDiacriticalMarks}]", "")
                     .toLowerCase()
-                    .replaceAll("\\*", "")           // Remover asteriscos
-                    .replaceAll("\\s+", " ")         // Normalizar espacios múltiples
-                    .replaceAll("\\(.*?\\)", "")     // Remover contenido entre paréntesis
-                    .trim();                          // Trim final
+                    .replaceAll("\\*", "")
+                    .replaceAll("\\s+", " ")
+                    .replaceAll("\\(.*?\\)", "")
+                    .trim();
                 
                 logger.debug("Header normalizado [" + colIndex + "]: '" + header + "'");
                 
@@ -192,28 +194,33 @@ public class ExcelImportService {
                 return null;
             };
             
-            // Información personal - buscar en múltiples variaciones de headers
+            // Información personal - buscar en múltiples variaciones de headers (nuevo y viejo formato)
             dto.setNombreCompleto(
                 obtenerValor.apply("nombre completo") != null ? obtenerValor.apply("nombre completo") :
+                obtenerValor.apply("nombres y apellidos") != null ? obtenerValor.apply("nombres y apellidos") :
+                obtenerValor.apply("nombre apellidos") != null ? obtenerValor.apply("nombre apellidos") :
                 obtenerValor.apply("nombrecompleto") != null ? obtenerValor.apply("nombrecompleto") :
                 obtenerValor.apply("nombre_completo") != null ? obtenerValor.apply("nombre_completo") : null
             );
-            
+
             dto.setTipoDocumento(
                 obtenerValor.apply("tipo documento") != null ? obtenerValor.apply("tipo documento") :
+                obtenerValor.apply("tipo de documento") != null ? obtenerValor.apply("tipo de documento") :
                 obtenerValor.apply("tipodocumento") != null ? obtenerValor.apply("tipodocumento") :
                 obtenerValor.apply("tipo_documento") != null ? obtenerValor.apply("tipo_documento") : null
             );
-            
+
             dto.setNumeroDocumento(
                 obtenerValor.apply("numero documento") != null ? obtenerValor.apply("numero documento") :
+                obtenerValor.apply("numero de documento") != null ? obtenerValor.apply("numero de documento") :
+                obtenerValor.apply("nro documento") != null ? obtenerValor.apply("nro documento") :
                 obtenerValor.apply("numerodocumento") != null ? obtenerValor.apply("numerodocumento") :
                 obtenerValor.apply("numero_documento") != null ? obtenerValor.apply("numero_documento") : null
             );
-            
+
             dto.setFechaNacimiento(
-                obtenerFecha.apply("fecha nacimiento (dd/mm/yyyy)") != null ? obtenerFecha.apply("fecha nacimiento (dd/mm/yyyy)") :
                 obtenerFecha.apply("fecha nacimiento") != null ? obtenerFecha.apply("fecha nacimiento") :
+                obtenerFecha.apply("fecha de nacimiento") != null ? obtenerFecha.apply("fecha de nacimiento") :
                 obtenerFecha.apply("fechanacimiento") != null ? obtenerFecha.apply("fechanacimiento") :
                 obtenerFecha.apply("fecha_nacimiento") != null ? obtenerFecha.apply("fecha_nacimiento") : null
             );
@@ -240,20 +247,28 @@ public class ExcelImportService {
             
             dto.setCelularEstudiante(
                 obtenerValor.apply("celular estudiante") != null ? obtenerValor.apply("celular estudiante") :
+                obtenerValor.apply("celular de contacto estudiante") != null ? obtenerValor.apply("celular de contacto estudiante") :
+                obtenerValor.apply("celular de contacto") != null ? obtenerValor.apply("celular de contacto") :
+                obtenerValor.apply("celular contacto estudiante") != null ? obtenerValor.apply("celular contacto estudiante") :
                 obtenerValor.apply("celularestudiante") != null ? obtenerValor.apply("celularestudiante") :
                 obtenerValor.apply("celular_estudiante") != null ? obtenerValor.apply("celular_estudiante") :
                 obtenerValor.apply("celular") != null ? obtenerValor.apply("celular") : null
             );
-            
+
             dto.setWhatsappEstudiante(
                 obtenerValor.apply("whatsapp estudiante") != null ? obtenerValor.apply("whatsapp estudiante") :
+                obtenerValor.apply("numero de whatsapp estudiante") != null ? obtenerValor.apply("numero de whatsapp estudiante") :
+                obtenerValor.apply("numero whatsapp estudiante") != null ? obtenerValor.apply("numero whatsapp estudiante") :
+                obtenerValor.apply("numero de whatsapp") != null ? obtenerValor.apply("numero de whatsapp") :
                 obtenerValor.apply("whatsappestudiante") != null ? obtenerValor.apply("whatsappestudiante") :
                 obtenerValor.apply("whatsapp_estudiante") != null ? obtenerValor.apply("whatsapp_estudiante") :
                 obtenerValor.apply("whatsapp") != null ? obtenerValor.apply("whatsapp") : null
             );
-            
+
             dto.setCorreoEstudiante(
                 obtenerValor.apply("correo estudiante") != null ? obtenerValor.apply("correo estudiante") :
+                obtenerValor.apply("correo electronico") != null ? obtenerValor.apply("correo electronico") :
+                obtenerValor.apply("correo electronico estudiante") != null ? obtenerValor.apply("correo electronico estudiante") :
                 obtenerValor.apply("correoestudiante") != null ? obtenerValor.apply("correoestudiante") :
                 obtenerValor.apply("correo_estudiante") != null ? obtenerValor.apply("correo_estudiante") :
                 obtenerValor.apply("correo") != null ? obtenerValor.apply("correo") :
@@ -263,77 +278,89 @@ public class ExcelImportService {
             // Información del tutor
             dto.setNombreTutor(
                 obtenerValor.apply("nombre tutor") != null ? obtenerValor.apply("nombre tutor") :
+                obtenerValor.apply("nombre del padre/madre/tutor") != null ? obtenerValor.apply("nombre del padre/madre/tutor") :
+                obtenerValor.apply("nombre padre/madre/tutor") != null ? obtenerValor.apply("nombre padre/madre/tutor") :
+                obtenerValor.apply("nombre padre madre tutor") != null ? obtenerValor.apply("nombre padre madre tutor") :
                 obtenerValor.apply("nombretutor") != null ? obtenerValor.apply("nombretutor") :
                 obtenerValor.apply("nombre_tutor") != null ? obtenerValor.apply("nombre_tutor") : null
             );
-            
+
             dto.setParentescoTutor(
                 obtenerValor.apply("parentesco tutor") != null ? obtenerValor.apply("parentesco tutor") :
+                obtenerValor.apply("parentesco") != null ? obtenerValor.apply("parentesco") :
                 obtenerValor.apply("parentescotutor") != null ? obtenerValor.apply("parentescotutor") :
                 obtenerValor.apply("parentesco_tutor") != null ? obtenerValor.apply("parentesco_tutor") : null
             );
-            
+
             dto.setDocumentoTutor(
                 obtenerValor.apply("documento tutor") != null ? obtenerValor.apply("documento tutor") :
+                obtenerValor.apply("numero de documento del tutor") != null ? obtenerValor.apply("numero de documento del tutor") :
+                obtenerValor.apply("numero documento tutor") != null ? obtenerValor.apply("numero documento tutor") :
                 obtenerValor.apply("documentotutor") != null ? obtenerValor.apply("documentotutor") :
                 obtenerValor.apply("documento_tutor") != null ? obtenerValor.apply("documento_tutor") : null
             );
-            
+
             dto.setTelefonoTutor(
                 obtenerValor.apply("telefono tutor") != null ? obtenerValor.apply("telefono tutor") :
+                obtenerValor.apply("telefono del tutor") != null ? obtenerValor.apply("telefono del tutor") :
                 obtenerValor.apply("telefonotutor") != null ? obtenerValor.apply("telefonotutor") :
-                obtenerValor.apply("telefono_tutor") != null ? obtenerValor.apply("telefono_tutor") :
-                obtenerValor.apply("teléfono tutor") != null ? obtenerValor.apply("teléfono tutor") : null
+                obtenerValor.apply("telefono_tutor") != null ? obtenerValor.apply("telefono_tutor") : null
             );
-            
+
             dto.setCorreoTutor(
                 obtenerValor.apply("correo tutor") != null ? obtenerValor.apply("correo tutor") :
+                obtenerValor.apply("correo del tutor") != null ? obtenerValor.apply("correo del tutor") :
                 obtenerValor.apply("correotutor") != null ? obtenerValor.apply("correotutor") :
                 obtenerValor.apply("correo_tutor") != null ? obtenerValor.apply("correo_tutor") : null
             );
-            
+
             dto.setOcupacionTutor(
                 obtenerValor.apply("ocupacion tutor") != null ? obtenerValor.apply("ocupacion tutor") :
+                obtenerValor.apply("ocupacion del tutor") != null ? obtenerValor.apply("ocupacion del tutor") :
                 obtenerValor.apply("ocupaciontutor") != null ? obtenerValor.apply("ocupaciontutor") :
-                obtenerValor.apply("ocupacion_tutor") != null ? obtenerValor.apply("ocupacion_tutor") :
-                obtenerValor.apply("ocupación tutor") != null ? obtenerValor.apply("ocupación tutor") : null
+                obtenerValor.apply("ocupacion_tutor") != null ? obtenerValor.apply("ocupacion_tutor") : null
             );
             
             // Información académica
             dto.setInstitucionEducativa(
                 obtenerValor.apply("institucion educativa") != null ? obtenerValor.apply("institucion educativa") :
                 obtenerValor.apply("institucioneducativa") != null ? obtenerValor.apply("institucioneducativa") :
-                obtenerValor.apply("institucion_educativa") != null ? obtenerValor.apply("institucion_educativa") :
-                obtenerValor.apply("institución educativa") != null ? obtenerValor.apply("institución educativa") : null
+                obtenerValor.apply("institucion_educativa") != null ? obtenerValor.apply("institucion_educativa") : null
             );
-            
+
             dto.setJornada(
                 obtenerValor.apply("jornada") != null ? obtenerValor.apply("jornada") : null
             );
-            
+
             dto.setGradoActual(
                 obtenerInt.apply("grado actual") != null ? obtenerInt.apply("grado actual") :
+                obtenerInt.apply("curso / grado actual") != null ? obtenerInt.apply("curso / grado actual") :
+                obtenerInt.apply("curso grado actual") != null ? obtenerInt.apply("curso grado actual") :
                 obtenerInt.apply("gradoactual") != null ? obtenerInt.apply("gradoactual") :
                 obtenerInt.apply("grado_actual") != null ? obtenerInt.apply("grado_actual") : null
             );
-            
+
             // Información médica
             dto.setEps(
-                obtenerValor.apply("eps") != null ? obtenerValor.apply("eps") : null
+                obtenerValor.apply("eps") != null ? obtenerValor.apply("eps") :
+                obtenerValor.apply("eps / entidad de salud") != null ? obtenerValor.apply("eps / entidad de salud") :
+                obtenerValor.apply("eps entidad de salud") != null ? obtenerValor.apply("eps entidad de salud") : null
             );
-            
+
             dto.setTipoSangre(
                 obtenerValor.apply("tipo sangre") != null ? obtenerValor.apply("tipo sangre") :
+                obtenerValor.apply("tipo de sangre") != null ? obtenerValor.apply("tipo de sangre") :
                 obtenerValor.apply("tiposangre") != null ? obtenerValor.apply("tiposangre") :
                 obtenerValor.apply("tipo_sangre") != null ? obtenerValor.apply("tipo_sangre") : null
             );
-            
+
             dto.setAlergias(
                 obtenerValor.apply("alergias") != null ? obtenerValor.apply("alergias") : null
             );
-            
+
             dto.setEnfermedadesCondiciones(
                 obtenerValor.apply("enfermedades/condiciones") != null ? obtenerValor.apply("enfermedades/condiciones") :
+                obtenerValor.apply("enfermedades o condiciones medicas") != null ? obtenerValor.apply("enfermedades o condiciones medicas") :
                 obtenerValor.apply("enfermedades condiciones") != null ? obtenerValor.apply("enfermedades condiciones") :
                 obtenerValor.apply("enfermedadescondiciones") != null ? obtenerValor.apply("enfermedadescondiciones") :
                 obtenerValor.apply("enfermedades_condiciones") != null ? obtenerValor.apply("enfermedades_condiciones") : null
@@ -351,111 +378,118 @@ public class ExcelImportService {
             // Información de pago
             dto.setDiaPagoMes(
                 obtenerInt.apply("dia pago mes") != null ? obtenerInt.apply("dia pago mes") :
+                obtenerInt.apply("fechas de pago en el mes") != null ? obtenerInt.apply("fechas de pago en el mes") :
                 obtenerInt.apply("diapagomes") != null ? obtenerInt.apply("diapagomes") :
-                obtenerInt.apply("dia_pago_mes") != null ? obtenerInt.apply("dia_pago_mes") :
-                obtenerInt.apply("día pago mes") != null ? obtenerInt.apply("día pago mes") : null
+                obtenerInt.apply("dia_pago_mes") != null ? obtenerInt.apply("dia_pago_mes") : null
             );
-            
+
             // Información de emergencia
             dto.setNombreEmergencia(
                 obtenerValor.apply("nombre emergencia") != null ? obtenerValor.apply("nombre emergencia") :
+                obtenerValor.apply("nombre contacto de emergencia") != null ? obtenerValor.apply("nombre contacto de emergencia") :
                 obtenerValor.apply("nombreemergencia") != null ? obtenerValor.apply("nombreemergencia") :
                 obtenerValor.apply("nombre_emergencia") != null ? obtenerValor.apply("nombre_emergencia") : null
             );
-            
+
             dto.setTelefonoEmergencia(
                 obtenerValor.apply("telefono emergencia") != null ? obtenerValor.apply("telefono emergencia") :
+                obtenerValor.apply("telefono del contacto de emergencia") != null ? obtenerValor.apply("telefono del contacto de emergencia") :
                 obtenerValor.apply("telefonoemergencia") != null ? obtenerValor.apply("telefonoemergencia") :
-                obtenerValor.apply("telefono_emergencia") != null ? obtenerValor.apply("telefono_emergencia") :
-                obtenerValor.apply("teléfono emergencia") != null ? obtenerValor.apply("teléfono emergencia") : null
+                obtenerValor.apply("telefono_emergencia") != null ? obtenerValor.apply("telefono_emergencia") : null
             );
-            
+
             dto.setParentescoEmergencia(
                 obtenerValor.apply("parentesco emergencia") != null ? obtenerValor.apply("parentesco emergencia") :
+                obtenerValor.apply("parentesco del contacto") != null ? obtenerValor.apply("parentesco del contacto") :
                 obtenerValor.apply("parentescoemergencia") != null ? obtenerValor.apply("parentescoemergencia") :
                 obtenerValor.apply("parentesco_emergencia") != null ? obtenerValor.apply("parentesco_emergencia") : null
             );
-            
+
             dto.setOcupacionEmergencia(
                 obtenerValor.apply("ocupacion emergencia") != null ? obtenerValor.apply("ocupacion emergencia") :
+                obtenerValor.apply("ocupacion del contacto") != null ? obtenerValor.apply("ocupacion del contacto") :
                 obtenerValor.apply("ocupacionemergencia") != null ? obtenerValor.apply("ocupacionemergencia") :
-                obtenerValor.apply("ocupacion_emergencia") != null ? obtenerValor.apply("ocupacion_emergencia") :
-                obtenerValor.apply("ocupación emergencia") != null ? obtenerValor.apply("ocupación emergencia") : null
+                obtenerValor.apply("ocupacion_emergencia") != null ? obtenerValor.apply("ocupacion_emergencia") : null
             );
-            
+
             dto.setCorreoEmergencia(
                 obtenerValor.apply("correo emergencia") != null ? obtenerValor.apply("correo emergencia") :
+                obtenerValor.apply("correo electronico del contacto") != null ? obtenerValor.apply("correo electronico del contacto") :
                 obtenerValor.apply("correoemergencia") != null ? obtenerValor.apply("correoemergencia") :
                 obtenerValor.apply("correo_emergencia") != null ? obtenerValor.apply("correo_emergencia") : null
             );
-            
+
             // Poblaciones vulnerables
             dto.setPerteneceIgbtiq(
-                obtenerBoolean.apply("pertenece lgbtiq (si/no)") != null ? obtenerBoolean.apply("pertenece lgbtiq (si/no)") :
-                obtenerBoolean.apply("pertenece lgbtiq") != null ? obtenerBoolean.apply("pertenece lgbtiq") : false
+                obtenerBoolean.apply("pertenece lgbtiq") != null ? obtenerBoolean.apply("pertenece lgbtiq") :
+                obtenerBoolean.apply("personas lgbtiq+") != null ? obtenerBoolean.apply("personas lgbtiq+") :
+                obtenerBoolean.apply("personas lgbtiq") != null ? obtenerBoolean.apply("personas lgbtiq") : false
             );
-            
+
             dto.setPersonaDiscapacidad(
-                obtenerBoolean.apply("persona discapacidad (si/no)") != null ? obtenerBoolean.apply("persona discapacidad (si/no)") :
-                obtenerBoolean.apply("persona discapacidad") != null ? obtenerBoolean.apply("persona discapacidad") : false
+                obtenerBoolean.apply("persona discapacidad") != null ? obtenerBoolean.apply("persona discapacidad") :
+                obtenerBoolean.apply("personas con discapacidad") != null ? obtenerBoolean.apply("personas con discapacidad") : false
             );
-            
+
             dto.setCondicionDiscapacidad(
                 obtenerValor.apply("condicion discapacidad") != null ? obtenerValor.apply("condicion discapacidad") :
+                obtenerValor.apply("condicion / patologia") != null ? obtenerValor.apply("condicion / patologia") :
+                obtenerValor.apply("condicion patologia") != null ? obtenerValor.apply("condicion patologia") :
                 obtenerValor.apply("condiciondiscapacidad") != null ? obtenerValor.apply("condiciondiscapacidad") :
-                obtenerValor.apply("condicion_discapacidad") != null ? obtenerValor.apply("condicion_discapacidad") :
-                obtenerValor.apply("condición discapacidad") != null ? obtenerValor.apply("condición discapacidad") : null
+                obtenerValor.apply("condicion_discapacidad") != null ? obtenerValor.apply("condicion_discapacidad") : null
             );
-            
+
             dto.setMigranteRefugiado(
-                obtenerBoolean.apply("migrante/refugiado (si/no)") != null ? obtenerBoolean.apply("migrante/refugiado (si/no)") :
+                obtenerBoolean.apply("migrante/refugiado") != null ? obtenerBoolean.apply("migrante/refugiado") :
+                obtenerBoolean.apply("migrantes, refugiados") != null ? obtenerBoolean.apply("migrantes, refugiados") :
+                obtenerBoolean.apply("migrantes refugiados") != null ? obtenerBoolean.apply("migrantes refugiados") :
                 obtenerBoolean.apply("migrante refugiado") != null ? obtenerBoolean.apply("migrante refugiado") : false
             );
-            
+
             dto.setPoblacionEtnica(
                 obtenerValor.apply("poblacion etnica") != null ? obtenerValor.apply("poblacion etnica") :
+                obtenerValor.apply("poblaciones etnicas") != null ? obtenerValor.apply("poblaciones etnicas") :
                 obtenerValor.apply("poblacionetnica") != null ? obtenerValor.apply("poblacionetnica") :
-                obtenerValor.apply("poblacion_etnica") != null ? obtenerValor.apply("poblacion_etnica") :
-                obtenerValor.apply("población étnica") != null ? obtenerValor.apply("población étnica") : null
+                obtenerValor.apply("poblacion_etnica") != null ? obtenerValor.apply("poblacion_etnica") : null
             );
-            
+
             dto.setReligion(
-                obtenerValor.apply("religion") != null ? obtenerValor.apply("religion") :
-                obtenerValor.apply("religión") != null ? obtenerValor.apply("religión") : null
+                obtenerValor.apply("religion") != null ? obtenerValor.apply("religion") : null
             );
-            
+
             // Información deportiva
             dto.setExperienciaVoleibol(
                 obtenerValor.apply("experiencia voleibol") != null ? obtenerValor.apply("experiencia voleibol") :
+                obtenerValor.apply("experiencia en voleibol") != null ? obtenerValor.apply("experiencia en voleibol") :
                 obtenerValor.apply("experienciavoleibol") != null ? obtenerValor.apply("experienciavoleibol") :
                 obtenerValor.apply("experiencia_voleibol") != null ? obtenerValor.apply("experiencia_voleibol") : null
             );
-            
+
             dto.setOtrasDisciplinas(
                 obtenerValor.apply("otras disciplinas") != null ? obtenerValor.apply("otras disciplinas") :
                 obtenerValor.apply("otrasdisciplinas") != null ? obtenerValor.apply("otrasdisciplinas") :
                 obtenerValor.apply("otras_disciplinas") != null ? obtenerValor.apply("otras_disciplinas") : null
             );
-            
+
             dto.setPosicionPreferida(
                 obtenerValor.apply("posicion preferida") != null ? obtenerValor.apply("posicion preferida") :
                 obtenerValor.apply("posicionpreferida") != null ? obtenerValor.apply("posicionpreferida") :
-                obtenerValor.apply("posicion_preferida") != null ? obtenerValor.apply("posicion_preferida") :
-                obtenerValor.apply("posición preferida") != null ? obtenerValor.apply("posición preferida") : null
+                obtenerValor.apply("posicion_preferida") != null ? obtenerValor.apply("posicion_preferida") : null
             );
-            
+
             dto.setDominancia(
                 obtenerValor.apply("dominancia") != null ? obtenerValor.apply("dominancia") : null
             );
-            
+
             dto.setNivelActual(
                 obtenerValor.apply("nivel actual") != null ? obtenerValor.apply("nivel actual") :
                 obtenerValor.apply("nivelactual") != null ? obtenerValor.apply("nivelactual") :
                 obtenerValor.apply("nivel_actual") != null ? obtenerValor.apply("nivel_actual") : null
             );
-            
+
             dto.setClubesAnteriores(
                 obtenerValor.apply("clubes anteriores") != null ? obtenerValor.apply("clubes anteriores") :
+                obtenerValor.apply("clubes o escuelas anteriores") != null ? obtenerValor.apply("clubes o escuelas anteriores") :
                 obtenerValor.apply("clubesanteriores") != null ? obtenerValor.apply("clubesanteriores") :
                 obtenerValor.apply("clubes_anteriores") != null ? obtenerValor.apply("clubes_anteriores") : null
             );
@@ -566,27 +600,25 @@ public class ExcelImportService {
      */
     private String getCellValueString(Row row, int columnIndex) {
         Cell cell = row.getCell(columnIndex);
-        if (cell == null) {
-            return null;
-        }
-        
-        if (cell.getCellType() == CellType.STRING) {
+        if (cell == null) return null;
+        CellType type = cell.getCellType() == CellType.FORMULA
+                ? cell.getCachedFormulaResultType() : cell.getCellType();
+        if (type == CellType.STRING) {
             return cell.getStringCellValue().trim();
-        } else if (cell.getCellType() == CellType.NUMERIC) {
+        } else if (type == CellType.NUMERIC) {
             return String.valueOf((long) cell.getNumericCellValue());
         }
         return null;
     }
-    
+
     private Integer getCellValueInt(Row row, int columnIndex) {
         Cell cell = row.getCell(columnIndex);
-        if (cell == null) {
-            return null;
-        }
-        
-        if (cell.getCellType() == CellType.NUMERIC) {
+        if (cell == null) return null;
+        CellType type = cell.getCellType() == CellType.FORMULA
+                ? cell.getCachedFormulaResultType() : cell.getCellType();
+        if (type == CellType.NUMERIC) {
             return (int) cell.getNumericCellValue();
-        } else if (cell.getCellType() == CellType.STRING) {
+        } else if (type == CellType.STRING) {
             try {
                 return Integer.parseInt(cell.getStringCellValue().trim());
             } catch (NumberFormatException e) {
@@ -595,53 +627,44 @@ public class ExcelImportService {
         }
         return null;
     }
-    
+
     private LocalDate getCellValueDate(Row row, int columnIndex) {
         Cell cell = row.getCell(columnIndex);
-        if (cell == null) {
-            return null;
-        }
-        
-        if (cell.getCellType() == CellType.NUMERIC) {
+        if (cell == null) return null;
+        CellType type = cell.getCellType() == CellType.FORMULA
+                ? cell.getCachedFormulaResultType() : cell.getCellType();
+        if (type == CellType.NUMERIC) {
             if (DateUtil.isCellDateFormatted(cell)) {
                 Date date = cell.getDateCellValue();
                 return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
             }
-        } else if (cell.getCellType() == CellType.STRING) {
+        } else if (type == CellType.STRING) {
             String fechaStr = cell.getStringCellValue().trim();
-            
-            // Intentar múltiples formatos de fecha
             java.time.format.DateTimeFormatter[] formatos = {
-                java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"),  // DD/MM/YYYY
-                java.time.format.DateTimeFormatter.ofPattern("d/M/yyyy"),    // D/M/YYYY (sin ceros)
-                java.time.format.DateTimeFormatter.ISO_LOCAL_DATE            // YYYY-MM-DD
+                java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+                java.time.format.DateTimeFormatter.ofPattern("d/M/yyyy"),
+                java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
             };
-            
             for (java.time.format.DateTimeFormatter formato : formatos) {
                 try {
                     return LocalDate.parse(fechaStr, formato);
-                } catch (Exception e) {
-                    // Intentar siguiente formato
-                }
+                } catch (Exception ignored) {}
             }
-            
-            return null;
         }
         return null;
     }
-    
+
     private Boolean getCellValueBoolean(Row row, int columnIndex) {
         Cell cell = row.getCell(columnIndex);
-        if (cell == null) {
-            return false;
-        }
-        
-        if (cell.getCellType() == CellType.BOOLEAN) {
+        if (cell == null) return false;
+        CellType type = cell.getCellType() == CellType.FORMULA
+                ? cell.getCachedFormulaResultType() : cell.getCellType();
+        if (type == CellType.BOOLEAN) {
             return cell.getBooleanCellValue();
-        } else if (cell.getCellType() == CellType.STRING) {
+        } else if (type == CellType.STRING) {
             String value = cell.getStringCellValue().trim().toLowerCase();
-            return value.equals("sí") || value.equals("si") || value.equals("true") || value.equals("1");
-        } else if (cell.getCellType() == CellType.NUMERIC) {
+            return value.equals("si") || value.equals("sí") || value.equals("true") || value.equals("1");
+        } else if (type == CellType.NUMERIC) {
             return cell.getNumericCellValue() != 0;
         }
         return false;

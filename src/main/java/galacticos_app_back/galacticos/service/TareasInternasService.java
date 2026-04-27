@@ -52,7 +52,7 @@ public class TareasInternasService {
     private final EstudianteRepository estudianteRepository;
     private final RecordatorioPagoRepository recordatorioPagoRepository;
     private final PagoRepository pagoRepository;
-    private final TwilioWhatsAppService twilioWhatsAppService;
+    private final MetaWhatsAppService metaWhatsAppService;
 
     @Value("${recordatorio.max-reintentos:3}")
     private int maxReintentos;
@@ -414,7 +414,7 @@ public class TareasInternasService {
 
         log.info("   📤 Enviando [{}] a {} ({})", tipo.getDescripcion(), estudiante.getNombreCompleto(), numero);
 
-        WhatsAppMessageResult resultado = twilioWhatsAppService.enviarRecordatorioPago(
+        WhatsAppMessageResult resultado = metaWhatsAppService.enviarRecordatorioPago(
                 numero, estudiante.getNombreCompleto(), fechaStr, tipo.getDiasDiferencia());
 
         RecordatorioPago rec = new RecordatorioPago();
@@ -456,7 +456,7 @@ public class TareasInternasService {
             String fechaStr = rec.getFechaVencimientoReferencia().format(FORMATTER);
             log.info("   🔄 Reintento ({}/{}) → {}", rec.getIntentos() + 1, maxReintentos, est.getNombreCompleto());
 
-            WhatsAppMessageResult resultado = twilioWhatsAppService.enviarRecordatorioPago(
+            WhatsAppMessageResult resultado = metaWhatsAppService.enviarRecordatorioPago(
                     numero, est.getNombreCompleto(), fechaStr, rec.getTipoRecordatorio().getDiasDiferencia());
 
             rec.setIntentos(rec.getIntentos() + 1);
@@ -689,7 +689,7 @@ public class TareasInternasService {
 
     public Map<String, Object> obtenerEstadisticas() {
         return Map.of(
-            "servicioTwilioActivo", twilioWhatsAppService.isServicioDisponible(),
+            "servicioWhatsAppActivo", metaWhatsAppService.isServicioDisponible(),
             "maxReintentos", maxReintentos,
             "pendientesReintento", recordatorioPagoRepository
                     .findByEstadoEnvioAndIntentosLessThan(EstadoEnvio.FALLIDO, maxReintentos).size(),

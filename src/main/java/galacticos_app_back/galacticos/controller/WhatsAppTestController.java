@@ -1,7 +1,7 @@
 package galacticos_app_back.galacticos.controller;
 
 import galacticos_app_back.galacticos.dto.WhatsAppMessageResult;
-import galacticos_app_back.galacticos.service.TwilioWhatsAppService;
+import galacticos_app_back.galacticos.service.MetaWhatsAppService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -23,7 +23,7 @@ import java.util.Map;
 @Slf4j
 public class WhatsAppTestController {
 
-    private final TwilioWhatsAppService twilioWhatsAppService;
+    private final MetaWhatsAppService metaWhatsAppService;
 
     /**
      * Endpoint de prueba para verificar el servicio.
@@ -31,10 +31,10 @@ public class WhatsAppTestController {
      */
     @GetMapping("/status")
     public ResponseEntity<Map<String, Object>> status() {
-        boolean disponible = twilioWhatsAppService.isServicioDisponible();
+        boolean disponible = metaWhatsAppService.isServicioDisponible();
         
         return ResponseEntity.ok(Map.of(
-            "servicio", "WhatsApp Twilio",
+            "servicio", "WhatsApp Meta",
             "disponible", disponible,
             "mensaje", disponible ? "Servicio listo para enviar mensajes" : "Servicio no disponible"
         ));
@@ -60,7 +60,7 @@ public class WhatsAppTestController {
 
         log.info("🧪 [TEST] Enviando mensaje de prueba a: {}", telefono);
         
-        WhatsAppMessageResult resultado = twilioWhatsAppService.enviarMensajePrueba(telefono);
+        WhatsAppMessageResult resultado = metaWhatsAppService.enviarMensajePrueba(telefono);
         
         if (resultado.isExito()) {
             log.info("✅ [TEST] Mensaje enviado exitosamente. SID: {}", resultado.getMessageSid());
@@ -99,7 +99,7 @@ public class WhatsAppTestController {
         log.info("🧪 [TEST] Enviando recordatorio de prueba - Teléfono: {}, Nombre: {}, Días: {}", 
                 telefono, nombre, dias);
         
-        WhatsAppMessageResult resultado = twilioWhatsAppService.enviarRecordatorioPago(
+        WhatsAppMessageResult resultado = metaWhatsAppService.enviarRecordatorioPago(
                 telefono, 
                 nombre, 
                 fechaFormateada, 

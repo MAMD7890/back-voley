@@ -4,7 +4,7 @@ import galacticos_app_back.galacticos.dto.WhatsAppMessageResult;
 import galacticos_app_back.galacticos.entity.RecordatorioPago;
 import galacticos_app_back.galacticos.service.RecordatorioPagoService;
 import galacticos_app_back.galacticos.service.RecordatorioSchedulerService;
-import galacticos_app_back.galacticos.service.TwilioWhatsAppService;
+import galacticos_app_back.galacticos.service.MetaWhatsAppService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -37,7 +37,7 @@ public class RecordatorioAdminController {
 
     private final RecordatorioPagoService recordatorioPagoService;
     private final RecordatorioSchedulerService recordatorioSchedulerService;
-    private final TwilioWhatsAppService twilioWhatsAppService;
+    private final MetaWhatsAppService metaWhatsAppService;
 
     /**
      * Obtiene todos los recordatorios del sistema.
@@ -119,7 +119,7 @@ public class RecordatorioAdminController {
         
         log.info("🧪 Enviando mensaje de prueba a: {}", telefono);
         
-        WhatsAppMessageResult resultado = twilioWhatsAppService.enviarMensajePrueba(telefono);
+        WhatsAppMessageResult resultado = metaWhatsAppService.enviarMensajePrueba(telefono);
         
         Map<String, Object> response = new HashMap<>();
         response.put("status", resultado.isExito() ? "success" : "error");

@@ -19,7 +19,7 @@ public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecifi
     List<Pago> findByFechaPagoBetween(LocalDate desde, LocalDate hasta);
     
     // Métodos para integración con Wompi
-    Optional<Pago> findByReferenciaPago(String referenciaPago);
+    Optional<Pago> findFirstByReferenciaPagoOrderByIdPagoDesc(String referenciaPago);
     Optional<Pago> findByWompiTransactionId(String wompiTransactionId);
     
     // Buscar pagos pendientes por monto (para matching de webhooks)

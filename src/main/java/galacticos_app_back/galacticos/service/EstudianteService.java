@@ -555,7 +555,7 @@ public class EstudianteService {
         // Información personal
         estudiante.setNombreCompleto(dto.getNombreCompleto());
         try {
-            estudiante.setTipoDocumento(Estudiante.TipoDocumento.valueOf(dto.getTipoDocumento().toUpperCase()));
+            estudiante.setTipoDocumento(Estudiante.TipoDocumento.valueOf(normalizarTipoDocumento(dto.getTipoDocumento())));
         } catch (Exception e) {
             estudiante.setTipoDocumento(Estudiante.TipoDocumento.CC);
         }
@@ -565,14 +565,12 @@ public class EstudianteService {
         // Sanitizar edad
         estudiante.setEdad(sanitizarEdad(dto.getEdad()));
         
-        // Sexo
+        // Sexo  ("Femenino" → FEMENINO, "Masculino" → MASCULINO, etc.)
         try {
             if (dto.getSexo() != null && !dto.getSexo().isEmpty()) {
-                estudiante.setSexo(Estudiante.Sexo.valueOf(dto.getSexo().toUpperCase()));
+                estudiante.setSexo(Estudiante.Sexo.valueOf(dto.getSexo().toUpperCase().trim()));
             }
-        } catch (Exception e) {
-            // Ignorar si no es un valor válido
-        }
+        } catch (Exception ignored) {}
         
         // Información de contacto
         estudiante.setDireccionResidencia(sanitizarTexto(dto.getDireccionResidencia(), 200));
@@ -611,11 +609,9 @@ public class EstudianteService {
         estudiante.setInstitucionEducativa(sanitizarTexto(dto.getInstitucionEducativa(), 150));
         try {
             if (dto.getJornada() != null && !dto.getJornada().isEmpty()) {
-                estudiante.setJornada(Estudiante.Jornada.valueOf(dto.getJornada().toUpperCase()));
+                estudiante.setJornada(Estudiante.Jornada.valueOf(normalizarJornada(dto.getJornada())));
             }
-        } catch (Exception e) {
-            // Ignorar si no es un valor válido
-        }
+        } catch (Exception ignored) {}
         estudiante.setGradoActual(dto.getGradoActual());
         
         // Información médica
@@ -647,11 +643,10 @@ public class EstudianteService {
         // Estado por defecto
         estudiante.setEstado(true);
 
-        // Estado de pago: usar el del CSV si se especificó, o PENDIENTE por defecto
+        // Estado de pago: usar el del Excel si se especificó (ej: "PENDIENTE POR PAGAR" → PENDIENTE)
         try {
             if (dto.getEstadoPago() != null && !dto.getEstadoPago().trim().isEmpty()) {
-                String estadoNormalizado = dto.getEstadoPago().trim().toUpperCase().replace(" ", "_");
-                estudiante.setEstadoPago(Estudiante.EstadoPago.valueOf(estadoNormalizado));
+                estudiante.setEstadoPago(Estudiante.EstadoPago.valueOf(normalizarEstadoPago(dto.getEstadoPago())));
             } else {
                 estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
             }
@@ -1013,8 +1008,43 @@ public class EstudianteService {
                 .orElseThrow(() -> new RuntimeException("Estudiante no encontrado"));
         
         // Actualizar solo los campos que no son null
+
+        // ── Información personal ─────────────────────────────────────────────
         if (dto.getNombreCompleto() != null) {
             estudiante.setNombreCompleto(dto.getNombreCompleto());
+        }
+        if (dto.getTipoDocumento() != null) {
+            try {
+                estudiante.setTipoDocumento(Estudiante.TipoDocumento.valueOf(
+                        normalizarTipoDocumento(dto.getTipoDocumento())));
+            } catch (Exception ignored) {}
+        }
+        if (dto.getNumeroDocumento() != null) {
+            estudiante.setNumeroDocumento(dto.getNumeroDocumento());
+        }
+        if (dto.getFechaNacimiento() != null) {
+            estudiante.setFechaNacimiento(dto.getFechaNacimiento());
+        }
+        if (dto.getEdad() != null) {
+            estudiante.setEdad(dto.getEdad());
+        }
+        if (dto.getSexo() != null) {
+            try {
+                estudiante.setSexo(Estudiante.Sexo.valueOf(dto.getSexo().toUpperCase().trim()));
+            } catch (Exception ignored) {}
+        }
+
+        // ── Sede ────────────────────────────────────────────────────────────
+        if (dto.getSedeId() != null) {
+            sedeRepository.findById(dto.getSedeId()).ifPresent(estudiante::setSede);
+        }
+
+        // ── Contacto del estudiante ──────────────────────────────────────────
+        if (dto.getDireccionResidencia() != null) {
+            estudiante.setDireccionResidencia(dto.getDireccionResidencia());
+        }
+        if (dto.getBarrio() != null) {
+            estudiante.setBarrio(dto.getBarrio());
         }
         if (dto.getCelularEstudiante() != null) {
             estudiante.setCelularEstudiante(dto.getCelularEstudiante());
@@ -1024,67 +1054,36 @@ public class EstudianteService {
         }
         if (dto.getCorreoEstudiante() != null) {
             String nuevoCorreo = dto.getCorreoEstudiante().toLowerCase().trim();
-            // Guardar el correo ORIGINAL del estudiante (como está en BD, puede tener mayúsculas)
             String correoOriginalEnBD = estudiante.getCorreoEstudiante();
-            String correoActualNormalizado = correoOriginalEnBD != null ? 
+            String correoActualNormalizado = correoOriginalEnBD != null ?
                 correoOriginalEnBD.toLowerCase().trim() : "";
-            
-            // Si el correo realmente no cambió (ignorando mayúsculas), permitir actualización
+
             if (nuevoCorreo.equals(correoActualNormalizado)) {
-                // Solo normalizar a minúsculas, no hay conflicto real
-                // Actualizar también en usuario si existe (buscar con el email ORIGINAL de la BD)
                 usuarioRepository.findByEmail(correoOriginalEnBD)
                         .ifPresent(usuario -> {
                             usuario.setEmail(nuevoCorreo);
                             usuarioRepository.save(usuario);
-                            System.out.println("✓ Usuario actualizado: email normalizado a minúsculas");
                         });
                 estudiante.setCorreoEstudiante(nuevoCorreo);
             } else {
-                // El correo SÍ cambió, verificar que no esté en uso por OTRO usuario
                 Optional<Usuario> usuarioConNuevoCorreo = usuarioRepository.findByEmail(nuevoCorreo);
-                
                 if (usuarioConNuevoCorreo.isPresent()) {
-                    // Buscar el usuario del estudiante actual (si tiene)
                     Optional<Usuario> usuarioDelEstudiante = usuarioRepository.findByEmail(correoOriginalEnBD);
-                    
-                    // Si el usuario encontrado NO es del estudiante actual, es duplicado
-                    if (usuarioDelEstudiante.isEmpty() || 
+                    if (usuarioDelEstudiante.isEmpty() ||
                         !usuarioConNuevoCorreo.get().getIdUsuario().equals(usuarioDelEstudiante.get().getIdUsuario())) {
                         throw new RuntimeException("El correo ya está registrado por otro usuario");
                     }
                 }
-                
-                // Actualizar el email del usuario asociado si existe
                 usuarioRepository.findByEmail(correoOriginalEnBD)
                         .ifPresent(usuario -> {
                             usuario.setEmail(nuevoCorreo);
                             usuarioRepository.save(usuario);
-                            System.out.println("✓ Usuario actualizado: nuevo email " + nuevoCorreo);
                         });
-                
                 estudiante.setCorreoEstudiante(nuevoCorreo);
             }
         }
-        if (dto.getDireccionResidencia() != null) {
-            estudiante.setDireccionResidencia(dto.getDireccionResidencia());
-        }
-        if (dto.getBarrio() != null) {
-            estudiante.setBarrio(dto.getBarrio());
-        }
-        if (dto.getEps() != null) {
-            estudiante.setEps(dto.getEps());
-        }
-        if (dto.getTipoSangre() != null) {
-            estudiante.setTipoSangre(dto.getTipoSangre());
-        }
-        if (dto.getAlergias() != null) {
-            estudiante.setAlergias(dto.getAlergias());
-        }
-        if (dto.getEnfermedadesCondiciones() != null) {
-            estudiante.setEnfermedadesCondiciones(dto.getEnfermedadesCondiciones());
-        }
-        // Datos del tutor
+
+        // ── Tutor ────────────────────────────────────────────────────────────
         if (dto.getNombreTutor() != null) {
             estudiante.setNombreTutor(dto.getNombreTutor());
         }
@@ -1103,8 +1102,41 @@ public class EstudianteService {
         if (dto.getOcupacionTutor() != null) {
             estudiante.setOcupacionTutor(dto.getOcupacionTutor());
         }
-        
-        // Contacto de emergencia
+
+        // ── Información académica ────────────────────────────────────────────
+        if (dto.getInstitucionEducativa() != null) {
+            estudiante.setInstitucionEducativa(dto.getInstitucionEducativa());
+        }
+        if (dto.getJornada() != null) {
+            try {
+                estudiante.setJornada(Estudiante.Jornada.valueOf(
+                        normalizarJornada(dto.getJornada())));
+            } catch (Exception ignored) {}
+        }
+        if (dto.getGradoActual() != null) {
+            estudiante.setGradoActual(dto.getGradoActual());
+        }
+
+        // ── Información médica ───────────────────────────────────────────────
+        if (dto.getEps() != null) {
+            estudiante.setEps(dto.getEps());
+        }
+        if (dto.getTipoSangre() != null) {
+            estudiante.setTipoSangre(dto.getTipoSangre());
+        }
+        if (dto.getAlergias() != null) {
+            estudiante.setAlergias(dto.getAlergias());
+        }
+        if (dto.getEnfermedadesCondiciones() != null) {
+            estudiante.setEnfermedadesCondiciones(dto.getEnfermedadesCondiciones());
+        }
+
+        // ── Pagos ────────────────────────────────────────────────────────────
+        if (dto.getDiaPagoMes() != null) {
+            estudiante.setDiaPagoMes(dto.getDiaPagoMes());
+        }
+
+        // ── Contacto de emergencia ───────────────────────────────────────────
         if (dto.getNombreEmergencia() != null) {
             estudiante.setNombreEmergencia(dto.getNombreEmergencia());
         }
@@ -1114,18 +1146,83 @@ public class EstudianteService {
         if (dto.getParentescoEmergencia() != null) {
             estudiante.setParentescoEmergencia(dto.getParentescoEmergencia());
         }
-        
-        // Datos de camiseta
+
+        // ── Poblaciones vulnerables ──────────────────────────────────────────
+        if (dto.getPersonaDiscapacidad() != null) {
+            estudiante.setPersonaDiscapacidad(dto.getPersonaDiscapacidad());
+        }
+        if (dto.getCondicionDiscapacidad() != null) {
+            estudiante.setCondicionDiscapacidad(dto.getCondicionDiscapacidad());
+        }
+        if (dto.getMigranteRefugiado() != null) {
+            estudiante.setMigranteRefugiado(dto.getMigranteRefugiado());
+        }
+        if (dto.getPoblacionEtnica() != null) {
+            estudiante.setPoblacionEtnica(dto.getPoblacionEtnica());
+        }
+
+        // ── Estado de pago ───────────────────────────────────────────────────
+        if (dto.getEstadoPago() != null) {
+            try {
+                estudiante.setEstadoPago(Estudiante.EstadoPago.valueOf(
+                        normalizarEstadoPago(dto.getEstadoPago())));
+            } catch (Exception ignored) {}
+        }
+
+        // ── Datos extra de la app ────────────────────────────────────────────
         if (dto.getNombreCamiseta() != null) {
             estudiante.setNombreCamiseta(dto.getNombreCamiseta());
         }
         if (dto.getNumeroCamiseta() != null) {
             estudiante.setNumeroCamiseta(dto.getNumeroCamiseta());
         }
-        
+
         return estudianteRepository.save(estudiante);
     }
-    
+
+    // ── Helpers de normalización de enums ────────────────────────────────────
+
+    private String normalizarTipoDocumento(String raw) {
+        if (raw == null) return "CC";
+        // Normalizar: quitar tildes, pasar a mayúsculas, quitar espacios extremos
+        String v = java.text.Normalizer.normalize(raw.trim(), java.text.Normalizer.Form.NFD)
+                .replaceAll("[\\p{InCombiningDiacriticalMarks}]", "")
+                .toUpperCase();
+        // Tarjeta de Identidad
+        if (v.equals("TI") || v.contains("TARJETA") || v.contains("IDENTIDAD")) return "TI";
+        // Registro Civil
+        if (v.equals("RC") || v.contains("REGISTRO") || v.contains("CIVIL")) return "RC";
+        // Cédula de Extranjería
+        if (v.equals("CE") || v.contains("EXTRANJERIA") || v.contains("EXTRANJERO")) return "CE";
+        // Permiso Temporal de Permanencia
+        if (v.equals("PPT") || v.contains("PERMANENCIA") || v.contains("TEMPORAL")) return "PPT";
+        // Pasaporte
+        if (v.equals("PASAPORTE") || v.contains("PASAPORTE")) return "PASAPORTE";
+        // Cédula de Ciudadanía (default)
+        if (v.equals("CC") || v.contains("CEDULA") || v.contains("CIUDADANIA")) return "CC";
+        return v;
+    }
+
+    private String normalizarEstadoPago(String raw) {
+        if (raw == null) return "PENDIENTE";
+        String v = raw.trim().toUpperCase().replace(" ", "_");
+        if (v.startsWith("PENDIENTE")) return "PENDIENTE";
+        if (v.equals("AL_DIA") || v.equals("AL_DÍA") || v.equals("ALDIA")) return "AL_DIA";
+        if (v.equals("EN_MORA") || v.equals("ENMORA")) return "EN_MORA";
+        if (v.equals("COMPROMISO_PAGO")) return "COMPROMISO_PAGO";
+        if (v.equals("DECLINADO")) return "DECLINADO";
+        return v;
+    }
+
+    private String normalizarJornada(String raw) {
+        if (raw == null) return "UNICA";
+        String v = raw.trim().toUpperCase();
+        if (v.contains("MAÑA") || v.contains("MANA") || v.equals("MATUTINA")) return "MAÑANA";
+        if (v.contains("TARDE") || v.equals("VESPERTINA")) return "TARDE";
+        if (v.contains("NOCHE") || v.equals("NOCTURNA")) return "NOCHE";
+        return "UNICA";
+    }
+
     // ================== MÉTODOS PARA GESTIÓN DE ESTADO DE PAGO ==================
     
     /**
@@ -1819,7 +1916,22 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
             membresia.setEstudiante(estudianteGuardado);
             membresia.setEquipo(null);
             membresia.setFechaInicio(LocalDate.now());
-            membresia.setFechaFin(LocalDate.now().plusMonths(1));
+            // Si diaPagoMes está definido, la fecha de vencimiento es ese día del mes actual
+            // (o del siguiente mes si ese día ya pasó)
+            LocalDate fechaFin;
+            if (dto.getDiaPagoMes() != null && dto.getDiaPagoMes() >= 1 && dto.getDiaPagoMes() <= 31) {
+                LocalDate hoy = LocalDate.now();
+                try {
+                    LocalDate candidato = hoy.withDayOfMonth(dto.getDiaPagoMes());
+                    fechaFin = candidato.isBefore(hoy) ? candidato.plusMonths(1) : candidato;
+                } catch (Exception e) {
+                    // El día no existe en este mes (ej: 31 en febrero) → último día del mes
+                    fechaFin = hoy.withDayOfMonth(hoy.lengthOfMonth());
+                }
+            } else {
+                fechaFin = LocalDate.now().plusMonths(1);
+            }
+            membresia.setFechaFin(fechaFin);
             membresia.setValorMensual(new BigDecimal("80000"));
             membresia.setEstado(false);
             

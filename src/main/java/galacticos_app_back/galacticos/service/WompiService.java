@@ -96,7 +96,7 @@ public class WompiService {
     private void createPendingPayment(Integer idEstudiante, BigDecimal amount, String reference, String mesPagado) {
         try {
             // Verificar si ya existe un pago con esta referencia
-            Optional<Pago> existingPago = pagoRepository.findByReferenciaPago(reference);
+            Optional<Pago> existingPago = pagoRepository.findFirstByReferenciaPagoOrderByIdPagoDesc(reference);
             if (existingPago.isPresent()) {
                 log.info("Pago ya existe con referencia: {}", reference);
                 return;
@@ -245,7 +245,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             log.info("Buscando transacción por referencia: {}", reference);
             
             // Buscar el pago en la base de datos local
-            Optional<Pago> pagoOpt = pagoRepository.findByReferenciaPago(reference);
+            Optional<Pago> pagoOpt = pagoRepository.findFirstByReferenciaPagoOrderByIdPagoDesc(reference);
             
             if (!pagoOpt.isPresent()) {
                 log.warn("No se encontró pago con referencia: {}", reference);
@@ -375,7 +375,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             Optional<Pago> pagoOpt = pagoRepository.findByWompiTransactionId(transactionId);
             
             if (!pagoOpt.isPresent() && reference != null) {
-                pagoOpt = pagoRepository.findByReferenciaPago(reference);
+                pagoOpt = pagoRepository.findFirstByReferenciaPagoOrderByIdPagoDesc(reference);
             }
             
             if (!pagoOpt.isPresent() && amountInCents != null) {
@@ -1169,7 +1169,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
 
                         // 2. ¿Hay un pago PENDIENTE con esa referencia?
                         if (reference != null) {
-                            Optional<Pago> pendiente = pagoRepository.findByReferenciaPago(reference);
+                            Optional<Pago> pendiente = pagoRepository.findFirstByReferenciaPagoOrderByIdPagoDesc(reference);
                             if (pendiente.isPresent() && pendiente.get().getEstadoPago() == Pago.EstadoPago.PENDIENTE) {
                                 LocalDateTime fechaColombia = convertirFechaWompiAColombia(finalizedAt);
                                 Pago pago = pendiente.get();
@@ -1374,7 +1374,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 Optional<Pago> pagoOpt = Optional.empty();
                 
                 // 1. Buscar por referencia exacta
-                pagoOpt = pagoRepository.findByReferenciaPago(wompiReference);
+                pagoOpt = pagoRepository.findFirstByReferenciaPagoOrderByIdPagoDesc(wompiReference);
                 
                 // 2. Si no se encuentra, buscar por transactionId de Wompi
                 if (!pagoOpt.isPresent()) {
@@ -1655,7 +1655,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             }
             
             if (!pagoOpt.isPresent() && reference != null) {
-                pagoOpt = pagoRepository.findByReferenciaPago(reference);
+                pagoOpt = pagoRepository.findFirstByReferenciaPagoOrderByIdPagoDesc(reference);
             }
             
             // Si aún no lo encontramos, buscar por estudiante y mes

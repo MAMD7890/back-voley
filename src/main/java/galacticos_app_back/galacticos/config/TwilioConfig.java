@@ -24,10 +24,10 @@ import org.springframework.context.annotation.Configuration;
 @Slf4j
 public class TwilioConfig {
 
-    @Value("${twilio.account-sid}")
+    @Value("${twilio.account-sid:}")
     private String accountSid;
 
-    @Value("${twilio.auth-token}")
+    @Value("${twilio.auth-token:}")
     private String authToken;
 
     @Value("${twilio.whatsapp-from}")
