@@ -1696,7 +1696,7 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                 usuario.setEstudiante(estudianteGuardado);
                 usuario.setEstado(true);
                 usuario.setRequiereChangioPassword(true);
-                usuario.setTipoDocumento(dto.getTipoDocumento());
+                usuario.setTipoDocumento(normalizarTipoDocumento(dto.getTipoDocumento()));
                 usuario.setNumeroDocumento(estudianteGuardado.getNumeroDocumento());
 
                 System.out.println("   - Intentando guardar usuario...");
@@ -1901,7 +1901,7 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
             usuario.setEstudiante(estudianteGuardado);
             usuario.setEstado(true);
             usuario.setRequiereChangioPassword(true);
-            usuario.setTipoDocumento(dto.getTipoDocumento());
+            usuario.setTipoDocumento(normalizarTipoDocumento(dto.getTipoDocumento()));
             usuario.setNumeroDocumento(estudianteGuardado.getNumeroDocumento());
 
             Usuario usuarioGuardado = usuarioRepository.save(usuario);
