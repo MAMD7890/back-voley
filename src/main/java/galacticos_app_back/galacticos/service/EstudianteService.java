@@ -1295,6 +1295,8 @@ public class EstudianteService {
             estudiante.setFechaLimiteCompromiso(null);
         }
 
+        estudiante.setObservacionPago(cambioDTO.getObservacion());
+
         Estudiante estudianteActualizado = estudianteRepository.save(estudiante);
 
         System.out.println(String.format("Estado de pago cambiado manualmente - Estudiante: %s, De: %s, A: %s, Observación: %s",

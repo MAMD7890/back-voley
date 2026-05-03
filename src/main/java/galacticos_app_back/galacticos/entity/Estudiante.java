@@ -188,6 +188,9 @@ public class Estudiante {
     @Column(length = 20)
     private EstadoPago estadoPago = EstadoPago.PENDIENTE;
 
+    @Column(columnDefinition = "TEXT")
+    private String observacionPago;
+
     /**
      * Indica que el estado de pago fue cambiado manualmente por un administrador.
      * Cuando es true, las tareas automáticas nocturnas no sobreescriben el estado.

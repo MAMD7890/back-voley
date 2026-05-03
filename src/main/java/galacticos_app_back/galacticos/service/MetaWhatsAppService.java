@@ -18,14 +18,14 @@ import java.util.Map;
  *
  * Todos los mensajes salientes usan plantillas (templates) pre-aprobadas por Meta.
  * Nombres de plantillas configurados:
- *   galacticos_recordatorio_5_dias  → {{1}}=nombre  {{2}}=fecha  {{3}}=link
- *   galacticos_recordatorio_2_dias  → {{1}}=nombre  {{2}}=fecha  {{3}}=link
- *   galacticos_vence_hoy            → {{1}}=nombre  {{2}}=fecha  {{3}}=link
- *   galacticos_mora_1               → {{1}}=nombre  {{2}}=fecha  {{3}}=link
- *   galacticos_mora_2               → {{1}}=nombre  {{2}}=fecha  {{3}}=link
- *   galacticos_mora_3               → {{1}}=nombre  {{2}}=fecha  {{3}}=link
- *   galacticos_bienvenida           → {{1}}=nombre  {{2}}=equipo {{3}}=link
- *   galacticos_confirmacion_pago    → {{1}}=nombre  {{2}}=monto  {{3}}=mes   {{4}}=fecha_vencimiento
+ *   galacticos_recordatorio_5_dias  → {{name}} {{fecha}} {{link}}
+ *   galacticos_recordatorio_2_dias  → {{name}} {{fecha}} {{link}}
+ *   galacticos_vence_hoy            → {{name}} {{fecha}} {{link}}
+ *   galacticos_mora_1               → {{name}} {{fecha}} {{link}}
+ *   galacticos_mora_2               → {{name}} {{fecha}} {{link}}
+ *   galacticos_mora_3               → {{name}} {{fecha}} {{link}}
+ *   galacticos_bienvenida           → {{name}} {{equipo}} {{link}}
+ *   confirmacionpago                → {{name}} {{monto}} {{periodo}} {{fecha}}
  *   galacticos_prueba               → sin parámetros
  */
 @Service
@@ -62,8 +62,11 @@ public class MetaWhatsAppService {
         };
 
         String nombre = capitalizarNombre(nombreEstudiante);
-        return enviarTemplate(numeroDestino, templateName,
-                params(nombre, fechaVencimiento, linkPago));
+        return enviarTemplate(numeroDestino, templateName, List.of(
+                param("name", nombre),
+                param("fecha", fechaVencimiento),
+                param("link", linkPago)
+        ));
     }
 
     public WhatsAppMessageResult enviarMensajeBienvenida(
@@ -71,8 +74,11 @@ public class MetaWhatsAppService {
             String nombreEstudiante,
             String nombreEquipo) {
 
-        return enviarTemplate(numeroDestino, "galacticos_bienvenida",
-                params(capitalizarNombre(nombreEstudiante), nombreEquipo, linkPago));
+        return enviarTemplate(numeroDestino, "galacticos_bienvenida", List.of(
+                param("name", capitalizarNombre(nombreEstudiante)),
+                param("equipo", nombreEquipo),
+                param("link", linkPago)
+        ));
     }
 
     public WhatsAppMessageResult enviarConfirmacionPago(
@@ -82,8 +88,12 @@ public class MetaWhatsAppService {
             String monto,
             String nuevaFechaVencimiento) {
 
-        return enviarTemplate(numeroDestino, "galacticos_confirmacion_pago",
-                params(capitalizarNombre(nombreEstudiante), monto, mesPagado, nuevaFechaVencimiento));
+        return enviarTemplate(numeroDestino, "confirmacionpago", List.of(
+                param("name", capitalizarNombre(nombreEstudiante)),
+                param("monto", monto),
+                param("periodo", mesPagado),
+                param("fecha", nuevaFechaVencimiento)
+        ));
     }
 
     public WhatsAppMessageResult enviarMensajePrueba(String numeroDestino) {
@@ -182,10 +192,8 @@ public class MetaWhatsAppService {
     //  HELPERS
     // ─────────────────────────────────────────────────────
 
-    private List<Map<String, String>> params(String... valores) {
-        return java.util.Arrays.stream(valores)
-                .map(v -> Map.of("type", "text", "text", v))
-                .toList();
+    private Map<String, String> param(String name, String value) {
+        return Map.of("type", "text", "parameter_name", name, "text", value != null ? value : "");
     }
 
     private String extraerMessageId(Map<String, Object> body) {

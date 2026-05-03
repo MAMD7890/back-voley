@@ -101,6 +101,7 @@ public class EstudianteResponseDTO {
     // Estado
     private Boolean estado;
     private String estadoPago;
+    private String observacionPago;
 
     public static EstudianteResponseDTO fromEntity(Estudiante estudiante) {
         if (estudiante == null) {
@@ -148,6 +149,7 @@ public class EstudianteResponseDTO {
                 .fotoNombre(estudiante.getFotoNombre())
                 .estado(estudiante.getEstado())
                 .estadoPago(estudiante.getEstadoPago() != null ? estudiante.getEstadoPago().name() : null)
+                .observacionPago(estudiante.getObservacionPago())
                 .build();
     }
 }
