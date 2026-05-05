@@ -4,10 +4,14 @@ import galacticos_app_back.galacticos.config.WompiConfig;
 import galacticos_app_back.galacticos.dto.wompi.*;
 import galacticos_app_back.galacticos.entity.Estudiante;
 import galacticos_app_back.galacticos.entity.Membresia;
+import galacticos_app_back.galacticos.entity.MembresiaHistorial;
 import galacticos_app_back.galacticos.entity.Pago;
+import galacticos_app_back.galacticos.entity.Plan;
 import galacticos_app_back.galacticos.repository.EstudianteRepository;
+import galacticos_app_back.galacticos.repository.MembresiaHistorialRepository;
 import galacticos_app_back.galacticos.repository.MembresiaRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
+import galacticos_app_back.galacticos.repository.PlanRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +54,8 @@ public class WompiService {
     private final PagoRepository pagoRepository;
     private final EstudianteRepository estudianteRepository;
     private final MembresiaRepository membresiaRepository;
+    private final MembresiaHistorialRepository membresiaHistorialRepository;
+    private final PlanRepository planRepository;
     private final ObjectMapper objectMapper;
     
     /**
@@ -1197,7 +1203,15 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                             }
                         }
 
-                        // 3. No existe nada — intentar crear el pago
+                        // 3. No existe nada — solo crear si la referencia es de esta app (PAY-)
+                        if (reference == null || !reference.startsWith("PAY-")) {
+                            detalle.put("resultado", "OMITIDO_REFERENCIA_EXTERNA");
+                            sinMatch++;
+                            log.info("⏭️ Transacción {} omitida — referencia externa no PAY-: {}", transactionId, reference);
+                            detalles.add(detalle);
+                            continue;
+                        }
+
                         Pago nuevoPago = createPaymentFromWebhookInternal(
                                 reference, transactionId, amountInCents, finalizedAt, customerEmail);
 
@@ -2160,20 +2174,34 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     .findUltimoPagoByEstudiante(estudiante.getIdEstudiante())
                     .stream()
                     .filter(p -> p.getEstadoPago() == Pago.EstadoPago.PAGADO)
+                    .filter(p -> p.getReferenciaPago() != null && p.getReferenciaPago().startsWith("PAY-"))
                     .findFirst();
             int mesesNuevoPago = nuevoPagoOpt
                     .map(p -> calcularMesesPorMonto(p.getValor()))
                     .orElse(1);
             if (mesesNuevoPago == 0) mesesNuevoPago = 1; // fallback conservador
 
+            // Buscar el plan correspondiente al monto del pago
+            Pago nuevoPago = nuevoPagoOpt.orElse(null);
+            Plan planEncontrado = null;
+            if (nuevoPago != null && nuevoPago.getValor() != null) {
+                planEncontrado = planRepository.findByActivoTrueOrderByOrdenVisualizacion().stream()
+                        .filter(p -> p.getPrecio() != null && p.getPrecio().compareTo(nuevoPago.getValor()) == 0)
+                        .findFirst().orElse(null);
+            }
+            final Plan planFinal = planEncontrado;
+
             List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
 
             if (membresias != null && !membresias.isEmpty()) {
-                // Tomar la membresía más reciente por fechaFin
                 Membresia membresia = membresias.stream()
                         .filter(m -> m.getFechaFin() != null)
                         .max(Comparator.comparing(Membresia::getFechaFin))
                         .orElse(membresias.get(0));
+
+                LocalDate fechaInicioAnterior = membresia.getFechaInicio();
+                LocalDate fechaFinAnterior    = membresia.getFechaFin();
+                Boolean estadoAnterior        = membresia.getEstado();
 
                 membresia.setEstado(true);
 
@@ -2181,13 +2209,11 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 LocalDate fechaFin    = membresia.getFechaFin();
 
                 if (fechaInicio == null || fechaFin == null) {
-                    // Sin fechas previas: período desde hoy
                     membresia.setFechaInicio(hoy);
                     membresia.setFechaFin(hoy.plusMonths(mesesNuevoPago));
                     log.info("✅ Membresía sin fechas → nueva desde hoy para {} hasta {}",
                             estudiante.getNombreCompleto(), membresia.getFechaFin());
                 } else {
-                    // Buscar pagos previos en el rango de la membresía (excluyendo el nuevo pago)
                     LocalDate desde = fechaInicio.minusDays(30);
                     LocalDate hasta = fechaFin.plusDays(5);
                     List<Pago> pagosEnRango = pagoRepository.findPagosAprobadosEnRango(
@@ -2196,21 +2222,20 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     Integer idNuevoPago = nuevoPagoOpt.map(Pago::getIdPago).orElse(-1);
                     int mesesExistentes = pagosEnRango.stream()
                             .filter(p -> !p.getIdPago().equals(idNuevoPago))
+                            .filter(p -> p.getReferenciaPago() != null && p.getReferenciaPago().startsWith("PAY-"))
                             .mapToInt(p -> calcularMesesPorMonto(p.getValor()))
                             .sum();
 
                     int mesesPeriodoActual = calcularMesesPeriodo(fechaInicio, fechaFin);
 
                     if (mesesExistentes >= mesesPeriodoActual) {
-                        // Período ya cubierto → nuevo pago abre el siguiente período
-                        LocalDate nuevaFechaInicio = fechaFin;
+                        LocalDate nuevaFechaInicio = fechaFin.isBefore(hoy) ? hoy : fechaFin;
                         LocalDate nuevaFechaFin    = nuevaFechaInicio.plusMonths(mesesNuevoPago);
                         membresia.setFechaInicio(nuevaFechaInicio);
                         membresia.setFechaFin(nuevaFechaFin);
                         log.info("✅ Período cubierto → siguiente período para {} | {} → {}",
                                 estudiante.getNombreCompleto(), nuevaFechaInicio, nuevaFechaFin);
                     } else {
-                        // Período no cubierto → nuevo pago extiende el período actual
                         int totalMeses  = mesesExistentes + mesesNuevoPago;
                         LocalDate nuevaFechaFin = fechaInicio.plusMonths(totalMeses);
                         membresia.setFechaFin(nuevaFechaFin);
@@ -2220,17 +2245,37 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     }
                 }
 
+                if (nuevoPago != null) membresia.setPagoOrigen(nuevoPago);
+                if (planFinal  != null) membresia.setPlan(planFinal);
+                membresia.setFechaUltimoCambio(LocalDateTime.now(ZONA_COLOMBIA));
+                membresia.setMotivoCambio("PAGO_CONFIRMADO");
                 membresiaRepository.save(membresia);
+
+                guardarHistorial(membresia, estudiante,
+                        fechaInicioAnterior, fechaFinAnterior, estadoAnterior,
+                        membresia.getFechaInicio(), membresia.getFechaFin(), true,
+                        "PAGO_CONFIRMADO", "SISTEMA");
+
                 log.info("✅ Membresía ACTIVADA para estudiante {} - Válida hasta: {}",
                         estudiante.getNombreCompleto(), membresia.getFechaFin());
             } else {
-                // No tiene membresía → crear una nueva desde hoy
                 Membresia nuevaMembresia = new Membresia();
                 nuevaMembresia.setEstudiante(estudiante);
                 nuevaMembresia.setFechaInicio(hoy);
                 nuevaMembresia.setFechaFin(hoy.plusMonths(mesesNuevoPago));
                 nuevaMembresia.setEstado(true);
+                if (nuevoPago != null) nuevaMembresia.setPagoOrigen(nuevoPago);
+                if (planFinal  != null) nuevaMembresia.setPlan(planFinal);
+                nuevaMembresia.setFechaCreacion(LocalDateTime.now(ZONA_COLOMBIA));
+                nuevaMembresia.setFechaUltimoCambio(LocalDateTime.now(ZONA_COLOMBIA));
+                nuevaMembresia.setMotivoCambio("PAGO_CONFIRMADO");
                 membresiaRepository.save(nuevaMembresia);
+
+                guardarHistorial(nuevaMembresia, estudiante,
+                        null, null, null,
+                        nuevaMembresia.getFechaInicio(), nuevaMembresia.getFechaFin(), true,
+                        "PAGO_CONFIRMADO", "SISTEMA");
+
                 log.info("✅ Nueva membresía CREADA para estudiante {} - Válida hasta: {}",
                         estudiante.getNombreCompleto(), nuevaMembresia.getFechaFin());
             }
@@ -2265,6 +2310,29 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
         if (dias <= 65) return 2;
         if (dias <= 95) return 3;
         return (int) Math.round(dias / 30.0);
+    }
+
+    private void guardarHistorial(Membresia membresia, Estudiante estudiante,
+                                  LocalDate fechaInicioAnt, LocalDate fechaFinAnt, Boolean estadoAnt,
+                                  LocalDate fechaInicioNueva, LocalDate fechaFinNueva, Boolean estadoNuevo,
+                                  String motivo, String origen) {
+        try {
+            membresiaHistorialRepository.save(MembresiaHistorial.builder()
+                    .membresia(membresia)
+                    .estudiante(estudiante)
+                    .fechaInicioAnterior(fechaInicioAnt)
+                    .fechaFinAnterior(fechaFinAnt)
+                    .estadoAnterior(estadoAnt)
+                    .fechaInicioNueva(fechaInicioNueva)
+                    .fechaFinNueva(fechaFinNueva)
+                    .estadoNuevo(estadoNuevo)
+                    .motivo(motivo)
+                    .origen(origen)
+                    .fechaCambio(LocalDateTime.now(ZONA_COLOMBIA))
+                    .build());
+        } catch (Exception e) {
+            log.warn("⚠️ No se pudo guardar historial de membresía {}: {}", membresia.getIdMembresia(), e.getMessage());
+        }
     }
 
     /**

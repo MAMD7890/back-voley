@@ -75,4 +75,31 @@ public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecifi
             @Param("desde") LocalDate desde,
             @Param("hasta") LocalDate hasta,
             @Param("valorMinimo") BigDecimal valorMinimo);
+
+    /**
+     * Busca pagos PAGADOS generados por esta app (referencia empieza con PAY-)
+     * de un estudiante dentro de un rango de fechas.
+     * Excluye pagos de links externos de Wompi (uniformes, etc.).
+     */
+    @Query("SELECT p FROM Pago p " +
+           "WHERE p.estudiante.idEstudiante = :idEstudiante " +
+           "AND p.estadoPago = 'PAGADO' " +
+           "AND p.referenciaPago LIKE 'PAY-%' " +
+           "AND p.fechaPago BETWEEN :desde AND :hasta " +
+           "ORDER BY p.fechaPago ASC")
+    List<Pago> findPagosAppEnRango(
+            @Param("idEstudiante") Integer idEstudiante,
+            @Param("desde") LocalDate desde,
+            @Param("hasta") LocalDate hasta);
+
+    /**
+     * Busca todos los pagos PAGADOS que no pertenecen a esta app
+     * (referenciaPago nula o que no empieza con PAY-).
+     * Estos son pagos de links externos de Wompi (uniformes, otros) que
+     * pudieron haberse registrado incorrectamente como membresías.
+     */
+    @Query("SELECT p FROM Pago p " +
+           "WHERE p.estadoPago = 'PAGADO' " +
+           "AND (p.referenciaPago IS NULL OR p.referenciaPago NOT LIKE 'PAY-%')")
+    List<Pago> findPagosExternos();
 }

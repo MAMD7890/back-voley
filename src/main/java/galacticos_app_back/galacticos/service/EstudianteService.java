@@ -2,7 +2,9 @@ package galacticos_app_back.galacticos.service;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,9 +32,11 @@ import galacticos_app_back.galacticos.dto.auth.AuthResponse;
 import galacticos_app_back.galacticos.dto.auth.RegisterRequest;
 import galacticos_app_back.galacticos.entity.Estudiante;
 import galacticos_app_back.galacticos.entity.Membresia;
+import galacticos_app_back.galacticos.entity.MembresiaHistorial;
 import galacticos_app_back.galacticos.entity.Pago;
 import galacticos_app_back.galacticos.entity.Usuario;
 import galacticos_app_back.galacticos.repository.EstudianteRepository;
+import galacticos_app_back.galacticos.repository.MembresiaHistorialRepository;
 import galacticos_app_back.galacticos.repository.MembresiaRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
 import galacticos_app_back.galacticos.repository.SedeRepository;
@@ -74,6 +78,9 @@ public class EstudianteService {
     
     @Autowired
     private galacticos_app_back.galacticos.repository.RolRepository rolRepository;
+
+    @Autowired
+    private MembresiaHistorialRepository membresiaHistorialRepository;
     
     // Obtener todos los estudiantes
     public List<Estudiante> obtenerTodos() {
@@ -1326,8 +1333,27 @@ public class EstudianteService {
                 .orElseThrow(() -> new RuntimeException("No se encontró membresía con fecha de vencimiento"));
 
         LocalDate fechaFinAnterior = membresia.getFechaFin();
+        LocalDate fechaInicioActual = membresia.getFechaInicio();
+        Boolean estadoActual = membresia.getEstado();
+
         membresia.setFechaFin(nuevaFechaFin);
+        membresia.setFechaUltimoCambio(LocalDateTime.now(ZoneId.of("America/Bogota")));
+        membresia.setMotivoCambio("CAMBIO_FECHA_FIN_MANUAL");
         membresiaRepository.save(membresia);
+
+        membresiaHistorialRepository.save(MembresiaHistorial.builder()
+                .membresia(membresia)
+                .estudiante(estudiante)
+                .fechaInicioAnterior(fechaInicioActual)
+                .fechaFinAnterior(fechaFinAnterior)
+                .estadoAnterior(estadoActual)
+                .fechaInicioNueva(fechaInicioActual)
+                .fechaFinNueva(nuevaFechaFin)
+                .estadoNuevo(estadoActual)
+                .motivo("CAMBIO_FECHA_FIN_MANUAL")
+                .origen("ADMIN")
+                .fechaCambio(LocalDateTime.now(ZoneId.of("America/Bogota")))
+                .build());
 
         return Map.of(
             "idEstudiante", idEstudiante,

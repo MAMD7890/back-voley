@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.math.BigDecimal;
 
 @Entity
@@ -37,7 +38,24 @@ public class Membresia {
     
     @Column
     private Boolean estado;
-    
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_plan")
+    private Plan plan;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_pago_origen")
+    private Pago pagoOrigen;
+
+    @Column
+    private LocalDateTime fechaCreacion;
+
+    @Column
+    private LocalDateTime fechaUltimoCambio;
+
+    @Column(length = 200)
+    private String motivoCambio;
+
     // Estados como constantes estáticas para referencia
     public static final Boolean ESTADO_ACTIVO = true;
     public static final Boolean ESTADO_INACTIVO = false;

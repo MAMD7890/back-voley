@@ -152,6 +152,36 @@ public class InternalTaskController {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    //  CORRECCIÓN PUNTUAL: eliminar pagos externos y recalcular membresías
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Busca pagos cuya referencia no empieza con "PAY-" (links externos de Wompi como
+     * uniformes) que se registraron incorrectamente en membresías.
+     * Recalcula fechaFin de cada membresía afectada usando solo pagos PAY- y elimina
+     * los pagos externos de la BD.
+     *
+     * POST /api/internal/membresias/corregir-pagos-externos
+     */
+    @PostMapping("/membresias/corregir-pagos-externos")
+    public ResponseEntity<Map<String, Object>> corregirPagosExternos(HttpServletRequest request) {
+        if (!esValida(request)) return respuestaNoAutorizada();
+
+        log.info("🔧 [LAMBDA] Corrección pagos externos desde IP: {}", request.getRemoteAddr());
+
+        try {
+            Map<String, Object> resultado = tareasInternasService.corregirPagosExternos();
+            return ResponseEntity.ok(resultado);
+        } catch (Exception e) {
+            log.error("❌ Error en corrección de pagos externos: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                "error", e.getMessage(),
+                "timestamp", LocalDateTime.now().toString()
+            ));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     //  HEALTH CHECK
     // ─────────────────────────────────────────────────────────────────
 

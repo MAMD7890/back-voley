@@ -40,8 +40,13 @@ public class MembresiaService {
     public Membresia actualizar(Integer id, Membresia membresia) {
         Optional<Membresia> existente = membresiaRepository.findById(id);
         if (existente.isPresent()) {
-            membresia.setIdMembresia(id);
-            return membresiaRepository.save(membresia);
+            Membresia actual = existente.get();
+            if (membresia.getFechaInicio()  != null) actual.setFechaInicio(membresia.getFechaInicio());
+            if (membresia.getFechaFin()     != null) actual.setFechaFin(membresia.getFechaFin());
+            if (membresia.getEstado()       != null) actual.setEstado(membresia.getEstado());
+            if (membresia.getValorMensual() != null) actual.setValorMensual(membresia.getValorMensual());
+            if (membresia.getEquipo()       != null) actual.setEquipo(membresia.getEquipo());
+            return membresiaRepository.save(actual);
         }
         return null;
     }

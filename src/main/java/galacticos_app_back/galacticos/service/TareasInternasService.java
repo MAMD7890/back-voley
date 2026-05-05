@@ -3,13 +3,17 @@ package galacticos_app_back.galacticos.service;
 import galacticos_app_back.galacticos.dto.WhatsAppMessageResult;
 import galacticos_app_back.galacticos.entity.Estudiante;
 import galacticos_app_back.galacticos.entity.Membresia;
+import galacticos_app_back.galacticos.entity.MembresiaHistorial;
 import galacticos_app_back.galacticos.entity.RecordatorioPago;
 import galacticos_app_back.galacticos.entity.RecordatorioPago.EstadoEnvio;
 import galacticos_app_back.galacticos.entity.RecordatorioPago.TipoRecordatorio;
 import galacticos_app_back.galacticos.repository.EstudianteRepository;
+import galacticos_app_back.galacticos.repository.MembresiaHistorialRepository;
 import galacticos_app_back.galacticos.repository.MembresiaRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
 import galacticos_app_back.galacticos.repository.RecordatorioPagoRepository;
+
+import java.time.ZoneId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,6 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +59,9 @@ public class TareasInternasService {
     private final RecordatorioPagoRepository recordatorioPagoRepository;
     private final PagoRepository pagoRepository;
     private final MetaWhatsAppService metaWhatsAppService;
+    private final MembresiaHistorialRepository membresiaHistorialRepository;
+
+    private static final ZoneId ZONA_CO = ZoneId.of("America/Bogota");
 
     @Value("${recordatorio.max-reintentos:3}")
     private int maxReintentos;
@@ -602,8 +611,7 @@ public class TareasInternasService {
                 LocalDate hasta = membresia.getFechaFin().plusDays(5);
 
                 List<galacticos_app_back.galacticos.entity.Pago> pagos = pagoRepository
-                        .findPagosAprobadosEnRango(estudiante.getIdEstudiante(),
-                                desde, hasta, java.math.BigDecimal.ZERO);
+                        .findPagosAppEnRango(estudiante.getIdEstudiante(), desde, hasta);
 
                 if (pagos.isEmpty()) {
                     log.warn("   ⚠️ {} – membresía {} sin pagos en rango [{} → {}]",
@@ -621,12 +629,20 @@ public class TareasInternasService {
 
                 if (totalMeses > mesesPeriodoActual) {
                     LocalDate nuevaFechaFin = membresia.getFechaInicio().plusMonths(totalMeses);
+                    LocalDate fechaFinAnteriorRec = membresia.getFechaFin();
+                    Boolean estadoAnteriorRec = membresia.getEstado();
                     log.info("   🔄 {} | {} → {} (pagos={}m, período={}m)",
                             estudiante.getNombreCompleto(),
                             membresia.getFechaFin(), nuevaFechaFin,
                             totalMeses, mesesPeriodoActual);
                     membresia.setFechaFin(nuevaFechaFin);
+                    membresia.setFechaUltimoCambio(LocalDateTime.now(ZONA_CO));
+                    membresia.setMotivoCambio("RECONCILIACION_PAGOS");
                     membresiaRepository.save(membresia);
+                    guardarHistorial(membresia, estudiante,
+                            membresia.getFechaInicio(), fechaFinAnteriorRec, estadoAnteriorRec,
+                            membresia.getFechaInicio(), nuevaFechaFin, membresia.getEstado(),
+                            "RECONCILIACION_PAGOS", "LAMBDA");
 
                     // Si la extensión supera hoy → poner AL_DIA
                     if (!nuevaFechaFin.isBefore(hoy)
@@ -684,6 +700,154 @@ public class TareasInternasService {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    //  CORRECCIÓN PUNTUAL: eliminar pagos externos y recalcular membresías
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Busca pagos PAGADOS cuya referencia no empieza con "PAY-" (pagos de links externos
+     * de Wompi como uniformes, matrículas, etc. que se registraron incorrectamente como
+     * membresías). Para cada uno:
+     *   1. Recalcula la fechaFin de la membresía del estudiante usando solo pagos PAY-.
+     *   2. Corrige el estado del estudiante si la membresía recalculada ya venció.
+     *   3. Elimina el pago externo de la BD.
+     *
+     * POST /api/internal/membresias/corregir-pagos-externos
+     */
+    @Transactional
+    public Map<String, Object> corregirPagosExternos() {
+        LocalDate hoy = LocalDate.now();
+        log.info("🔧 ====== CORRECCIÓN PAGOS EXTERNOS - {} ======", hoy);
+
+        int pagosEliminados = 0;
+        int membresiasCorregidas = 0;
+        int sinCambio = 0;
+        int errores = 0;
+        List<Map<String, Object>> detalles = new ArrayList<>();
+
+        List<galacticos_app_back.galacticos.entity.Pago> pagosExternos = pagoRepository.findPagosExternos();
+        log.info("📋 Pagos externos encontrados: {}", pagosExternos.size());
+
+        for (galacticos_app_back.galacticos.entity.Pago pagoExterno : pagosExternos) {
+            Map<String, Object> detalle = new HashMap<>();
+            try {
+                detalle.put("idPago", pagoExterno.getIdPago());
+                detalle.put("referencia", pagoExterno.getReferenciaPago());
+                detalle.put("monto", pagoExterno.getValor());
+
+                Estudiante estudiante = pagoExterno.getEstudiante();
+                if (estudiante == null) {
+                    pagoRepository.delete(pagoExterno);
+                    pagosEliminados++;
+                    detalle.put("resultado", "ELIMINADO_SIN_ESTUDIANTE");
+                    detalles.add(detalle);
+                    continue;
+                }
+
+                detalle.put("idEstudiante", estudiante.getIdEstudiante());
+                detalle.put("nombre", estudiante.getNombreCompleto());
+
+                List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
+
+                if (membresias != null && !membresias.isEmpty()) {
+                    Membresia membresia = membresias.stream()
+                            .filter(m -> m.getFechaFin() != null)
+                            .max(Comparator.comparing(Membresia::getFechaFin))
+                            .orElse(membresias.get(0));
+
+                    LocalDate fechaInicio = membresia.getFechaInicio();
+                    LocalDate fechaFinAnterior = membresia.getFechaFin();
+                    detalle.put("fechaFinAnterior", fechaFinAnterior != null ? fechaFinAnterior.toString() : null);
+
+                    if (fechaInicio != null) {
+                        LocalDate desde = fechaInicio.minusDays(30);
+                        LocalDate hasta = fechaFinAnterior != null ? fechaFinAnterior.plusDays(5) : hoy;
+
+                        List<galacticos_app_back.galacticos.entity.Pago> pagosApp =
+                                pagoRepository.findPagosAppEnRango(estudiante.getIdEstudiante(), desde, hasta);
+
+                        int totalMesesApp = pagosApp.stream()
+                                .mapToInt(p -> calcularMesesPorMontoInterno(p.getValor()))
+                                .sum();
+
+                        if (totalMesesApp > 0) {
+                            LocalDate nuevaFechaFin = fechaInicio.plusMonths(totalMesesApp);
+                            if (!nuevaFechaFin.equals(fechaFinAnterior)) {
+                                Boolean estadoAnteriorCE = membresia.getEstado();
+                                Boolean estadoNuevoCE = !nuevaFechaFin.isBefore(hoy);
+                                membresia.setFechaFin(nuevaFechaFin);
+                                membresia.setEstado(estadoNuevoCE);
+                                membresia.setFechaUltimoCambio(LocalDateTime.now(ZONA_CO));
+                                membresia.setMotivoCambio("CORRECCION_PAGO_EXTERNO");
+                                membresiaRepository.save(membresia);
+                                guardarHistorial(membresia, estudiante,
+                                        fechaInicio, fechaFinAnterior, estadoAnteriorCE,
+                                        fechaInicio, nuevaFechaFin, estadoNuevoCE,
+                                        "CORRECCION_PAGO_EXTERNO", "LAMBDA");
+                                membresiasCorregidas++;
+                                detalle.put("fechaFinNueva", nuevaFechaFin.toString());
+
+                                if (nuevaFechaFin.isBefore(hoy) &&
+                                        estudiante.getEstadoPago() == Estudiante.EstadoPago.AL_DIA) {
+                                    estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                                    estudianteRepository.save(estudiante);
+                                    detalle.put("estadoEstudiante", "CORREGIDO_A_EN_MORA");
+                                }
+                            } else {
+                                sinCambio++;
+                            }
+                        } else {
+                            // Sin pagos PAY- reales → desactivar membresía
+                            Boolean estadoAnteriorDes = membresia.getEstado();
+                            membresia.setEstado(false);
+                            membresia.setFechaUltimoCambio(LocalDateTime.now(ZONA_CO));
+                            membresia.setMotivoCambio("DESACTIVADA_SIN_PAGOS_APP");
+                            membresiaRepository.save(membresia);
+                            guardarHistorial(membresia, estudiante,
+                                    fechaInicio, fechaFinAnterior, estadoAnteriorDes,
+                                    fechaInicio, fechaFinAnterior, false,
+                                    "DESACTIVADA_SIN_PAGOS_APP", "LAMBDA");
+                            membresiasCorregidas++;
+                            detalle.put("membresiaDesactivada", true);
+
+                            if (estudiante.getEstadoPago() == Estudiante.EstadoPago.AL_DIA) {
+                                estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                                estudianteRepository.save(estudiante);
+                                detalle.put("estadoEstudiante", "CORREGIDO_A_EN_MORA");
+                            }
+                        }
+                    }
+                }
+
+                pagoRepository.delete(pagoExterno);
+                pagosEliminados++;
+                detalle.put("resultado", "ELIMINADO");
+
+            } catch (Exception e) {
+                errores++;
+                detalle.put("error", e.getMessage());
+                detalle.put("resultado", "ERROR");
+                log.error("❌ Error procesando pago externo {}: {}", pagoExterno.getIdPago(), e.getMessage());
+            }
+            detalles.add(detalle);
+        }
+
+        log.info("📊 Corrección pagos externos: {} eliminados, {} membresías corregidas, {} sin cambio, {} errores",
+                pagosEliminados, membresiasCorregidas, sinCambio, errores);
+
+        Map<String, Object> resultado = new HashMap<>();
+        resultado.put("tarea", "correccion_pagos_externos");
+        resultado.put("fecha", hoy.toString());
+        resultado.put("pagosExternosEncontrados", pagosEliminados + sinCambio + errores);
+        resultado.put("pagosEliminados", pagosEliminados);
+        resultado.put("membresiasCorregidas", membresiasCorregidas);
+        resultado.put("sinCambio", sinCambio);
+        resultado.put("errores", errores);
+        resultado.put("detalles", detalles);
+        resultado.put("timestamp", LocalDateTime.now().toString());
+        return resultado;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     //  ESTADÍSTICAS (para endpoint de salud)
     // ─────────────────────────────────────────────────────────────────
 
@@ -695,5 +859,28 @@ public class TareasInternasService {
                     .findByEstadoEnvioAndIntentosLessThan(EstadoEnvio.FALLIDO, maxReintentos).size(),
             "totalRecordatorios", recordatorioPagoRepository.count()
         );
+    }
+
+    private void guardarHistorial(Membresia membresia, Estudiante estudiante,
+                                  LocalDate fechaInicioAnt, LocalDate fechaFinAnt, Boolean estadoAnt,
+                                  LocalDate fechaInicioNueva, LocalDate fechaFinNueva, Boolean estadoNuevo,
+                                  String motivo, String origen) {
+        try {
+            membresiaHistorialRepository.save(MembresiaHistorial.builder()
+                    .membresia(membresia)
+                    .estudiante(estudiante)
+                    .fechaInicioAnterior(fechaInicioAnt)
+                    .fechaFinAnterior(fechaFinAnt)
+                    .estadoAnterior(estadoAnt)
+                    .fechaInicioNueva(fechaInicioNueva)
+                    .fechaFinNueva(fechaFinNueva)
+                    .estadoNuevo(estadoNuevo)
+                    .motivo(motivo)
+                    .origen(origen)
+                    .fechaCambio(LocalDateTime.now(ZONA_CO))
+                    .build());
+        } catch (Exception e) {
+            log.warn("⚠️ No se pudo guardar historial membresía {}: {}", membresia.getIdMembresia(), e.getMessage());
+        }
     }
 }

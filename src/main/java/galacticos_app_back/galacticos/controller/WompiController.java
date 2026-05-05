@@ -3,6 +3,8 @@ package galacticos_app_back.galacticos.controller;
 import galacticos_app_back.galacticos.config.WompiConfig;
 import galacticos_app_back.galacticos.dto.wompi.*;
 import galacticos_app_back.galacticos.dto.auth.MessageResponse;
+import galacticos_app_back.galacticos.entity.Plan;
+import galacticos_app_back.galacticos.repository.PlanRepository;
 import galacticos_app_back.galacticos.service.WompiService;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,8 +16,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -26,6 +30,7 @@ public class WompiController {
 
     private final WompiService wompiService;
     private final WompiConfig wompiConfig;
+    private final PlanRepository planRepository;
 
     @Value("${app.internal.api-key}")
     private String internalApiKey;
@@ -57,9 +62,25 @@ public class WompiController {
     public ResponseEntity<?> generateIntegritySignature(
             @RequestBody IntegritySignatureRequest request) {
         try {
-            log.info("Generando firma de integridad para referencia: {}, idEstudiante: {}", 
+            log.info("Generando firma de integridad para referencia: {}, idEstudiante: {}",
                     request.getReference(), request.getIdEstudiante());
-            
+
+            // Validar que el monto corresponda exactamente al precio de un plan activo
+            if (request.getAmount() == null) {
+                return ResponseEntity.badRequest()
+                        .body(MessageResponse.error("El monto es requerido"));
+            }
+            List<Plan> planes = planRepository.findByActivoTrueOrderByOrdenVisualizacion();
+            boolean montoValido = planes.stream()
+                    .anyMatch(p -> p.getPrecio() != null &&
+                              p.getPrecio().compareTo(request.getAmount()) == 0);
+            if (!montoValido) {
+                log.warn("❌ Monto inválido para firma Wompi: {} — no coincide con ningún plan activo", request.getAmount());
+                return ResponseEntity.badRequest()
+                        .body(MessageResponse.error("El monto " + request.getAmount() +
+                              " no corresponde al precio de ningún plan activo"));
+            }
+
             String currency = request.getCurrency() != null ? request.getCurrency() : "COP";
             
             // Pasar idEstudiante y mesPagado para crear el pago pendiente
