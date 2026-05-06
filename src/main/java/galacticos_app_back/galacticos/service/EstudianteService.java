@@ -1350,7 +1350,9 @@ public class EstudianteService {
         Boolean estadoActual = membresia.getEstado();
         Estudiante.EstadoPago estadoPagoAnterior = estudiante.getEstadoPago();
 
+        boolean nuevoEstadoMembresia = !nuevaFechaFin.isBefore(hoy);
         membresia.setFechaFin(nuevaFechaFin);
+        membresia.setEstado(nuevoEstadoMembresia);
         membresia.setFechaUltimoCambio(LocalDateTime.now(ZoneId.of("America/Bogota")));
         membresia.setMotivoCambio("CAMBIO_FECHA_FIN_MANUAL");
         membresiaRepository.save(membresia);
@@ -1379,7 +1381,7 @@ public class EstudianteService {
                 .estadoAnterior(estadoActual)
                 .fechaInicioNueva(fechaInicioActual)
                 .fechaFinNueva(nuevaFechaFin)
-                .estadoNuevo(estadoActual)
+                .estadoNuevo(nuevoEstadoMembresia)
                 .motivo("CAMBIO_FECHA_FIN_MANUAL")
                 .origen("ADMIN")
                 .fechaCambio(LocalDateTime.now(ZoneId.of("America/Bogota")))
