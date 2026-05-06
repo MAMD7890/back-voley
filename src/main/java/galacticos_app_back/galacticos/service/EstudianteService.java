@@ -1353,6 +1353,7 @@ public class EstudianteService {
         boolean nuevoEstadoMembresia = !nuevaFechaFin.isBefore(hoy);
         membresia.setFechaFin(nuevaFechaFin);
         membresia.setEstado(nuevoEstadoMembresia);
+        membresia.setAjustadoManualmente(true);
         membresia.setFechaUltimoCambio(LocalDateTime.now(ZoneId.of("America/Bogota")));
         membresia.setMotivoCambio("CAMBIO_FECHA_FIN_MANUAL");
         membresiaRepository.save(membresia);

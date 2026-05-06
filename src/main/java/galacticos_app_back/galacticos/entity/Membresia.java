@@ -56,6 +56,9 @@ public class Membresia {
     @Column(length = 200)
     private String motivoCambio;
 
+    @Column
+    private Boolean ajustadoManualmente;
+
     // Estados como constantes estáticas para referencia
     public static final Boolean ESTADO_ACTIVO = true;
     public static final Boolean ESTADO_INACTIVO = false;

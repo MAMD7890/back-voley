@@ -2211,7 +2211,16 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 LocalDate fechaInicio = membresia.getFechaInicio();
                 LocalDate fechaFin    = membresia.getFechaFin();
 
-                if (fechaInicio == null || fechaFin == null) {
+                if (Boolean.TRUE.equals(membresia.getAjustadoManualmente())) {
+                    // Fecha fin fue ajustada manualmente — respetarla como base del siguiente período
+                    LocalDate nuevaFechaInicio = fechaFin != null ? fechaFin : hoy;
+                    LocalDate nuevaFechaFin    = nuevaFechaInicio.plusMonths(mesesNuevoPago);
+                    membresia.setFechaInicio(nuevaFechaInicio);
+                    membresia.setFechaFin(nuevaFechaFin);
+                    membresia.setAjustadoManualmente(false);
+                    log.info("✅ Fecha manual respetada para {} → {} → {}",
+                            estudiante.getNombreCompleto(), nuevaFechaInicio, nuevaFechaFin);
+                } else if (fechaInicio == null || fechaFin == null) {
                     membresia.setFechaInicio(hoy);
                     membresia.setFechaFin(hoy.plusMonths(mesesNuevoPago));
                     log.info("✅ Membresía sin fechas → nueva desde hoy para {} hasta {}",
@@ -2232,7 +2241,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     int mesesPeriodoActual = calcularMesesPeriodo(fechaInicio, fechaFin);
 
                     if (mesesExistentes >= mesesPeriodoActual) {
-                        LocalDate nuevaFechaInicio = fechaFin.isBefore(hoy) ? hoy : fechaFin;
+                        LocalDate nuevaFechaInicio = fechaFin;
                         LocalDate nuevaFechaFin    = nuevaFechaInicio.plusMonths(mesesNuevoPago);
                         membresia.setFechaInicio(nuevaFechaInicio);
                         membresia.setFechaFin(nuevaFechaFin);
