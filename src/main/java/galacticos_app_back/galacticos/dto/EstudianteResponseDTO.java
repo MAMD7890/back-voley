@@ -102,6 +102,7 @@ public class EstudianteResponseDTO {
     private Boolean estado;
     private String estadoPago;
     private String observacionPago;
+    private LocalDate fechaLimiteCompromiso;
 
     public static EstudianteResponseDTO fromEntity(Estudiante estudiante) {
         if (estudiante == null) {
@@ -150,6 +151,7 @@ public class EstudianteResponseDTO {
                 .estado(estudiante.getEstado())
                 .estadoPago(estudiante.getEstadoPago() != null ? estudiante.getEstadoPago().name() : null)
                 .observacionPago(estudiante.getObservacionPago())
+                .fechaLimiteCompromiso(estudiante.getFechaLimiteCompromiso())
                 .build();
     }
 }

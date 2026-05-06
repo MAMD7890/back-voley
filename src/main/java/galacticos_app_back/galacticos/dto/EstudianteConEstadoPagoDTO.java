@@ -50,6 +50,10 @@ public class EstudianteConEstadoPagoDTO {
     private LocalDate fechaInicioMembresia;
     private LocalDate fechaFinMembresia;
     private Boolean membresiaActiva;
+
+    // Observación de pago
+    private String observacionPago;
+    private LocalDate fechaLimiteCompromiso;
     
     /**
      * Crea un DTO a partir de una entidad Estudiante
@@ -71,6 +75,8 @@ public class EstudianteConEstadoPagoDTO {
                 .idSede(estudiante.getSede() != null ? estudiante.getSede().getIdSede() : null)
                 .nombreSede(estudiante.getSede() != null ? estudiante.getSede().getNombre() : null)
                 .nivelActual(estudiante.getNivelActual() != null ? estudiante.getNivelActual().name() : null)
+                .observacionPago(estudiante.getObservacionPago())
+                .fechaLimiteCompromiso(estudiante.getFechaLimiteCompromiso())
                 .build();
     }
     
@@ -90,11 +96,13 @@ public class EstudianteConEstadoPagoDTO {
                 return "En mora";
             case COMPROMISO_PAGO:
                 return "Compromiso de pago";
+            case SIN_MEMBRESIA:
+                return "Sin membresía";
             default:
                 return "Desconocido";
         }
     }
-    
+
     /**
      * Obtiene el color asociado al estado de pago para el frontend
      */
@@ -111,6 +119,8 @@ public class EstudianteConEstadoPagoDTO {
                 return "#EF5350"; // Rojo
             case COMPROMISO_PAGO:
                 return "#42A5F5"; // Azul
+            case SIN_MEMBRESIA:
+                return "#9E9E9E"; // Gris
             default:
                 return "#9E9E9E"; // Gris
         }

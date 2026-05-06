@@ -455,6 +455,36 @@ public class EstudianteController {
     }
 
     /**
+     * Cambiar fecha de inicio de membresía
+     * PATCH /api/estudiantes/{id}/membresia/fecha-inicio
+     * Body: { "fechaInicio": "2026-01-15" }
+     */
+    @PatchMapping("/{id}/membresia/fecha-inicio")
+    public ResponseEntity<?> cambiarFechaInicioMembresia(
+            @PathVariable Integer id,
+            @RequestBody Map<String, String> body) {
+        try {
+            String fechaStr = body.get("fechaInicio");
+            if (fechaStr == null || fechaStr.isBlank()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "El campo 'fechaInicio' es requerido (formato: yyyy-MM-dd)"));
+            }
+            LocalDate nuevaFechaInicio = LocalDate.parse(fechaStr);
+            Map<String, Object> resultado = estudianteService.cambiarFechaInicioMembresia(id, nuevaFechaInicio);
+            return ResponseEntity.ok(resultado);
+        } catch (java.time.format.DateTimeParseException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Formato de fecha inválido. Use yyyy-MM-dd (ej: 2026-01-15)"));
+        } catch (RuntimeException e) {
+            String msg = e.getMessage();
+            if (msg.contains("no encontrado") || msg.contains("no tiene membresía")) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", msg));
+            }
+            return ResponseEntity.badRequest().body(Map.of("error", msg));
+        }
+    }
+
+    /**
      * Verificar y actualizar estados de pago (ejecutar manualmente o por scheduler)
      * POST /api/estudiantes/verificar-estados-pago
      */

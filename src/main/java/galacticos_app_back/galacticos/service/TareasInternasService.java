@@ -66,6 +66,9 @@ public class TareasInternasService {
     @Value("${recordatorio.max-reintentos:3}")
     private int maxReintentos;
 
+    @Value("${app.tareas.inactivar-mora-15-dias:false}")
+    private boolean inactivarMora15Dias;
+
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     // Días relativos a fechaFin en los que se envía recordatorio
@@ -95,10 +98,46 @@ public class TareasInternasService {
 
         // ── FASE 0: CORRECCIÓN DE INCONSISTENCIAS (solo estados NO cambiados manualmente) ──
         log.info("🔧 Fase 0 - Corrección de inconsistencias...");
+
+        // Corregir inactivos que no tienen SIN_MEMBRESIA (fueron inactivados manualmente sin pasar por el flujo)
+        List<Estudiante> inactivos = estudianteRepository.findByEstado(false);
+        for (Estudiante estudiante : inactivos) {
+            if (estudiante.getEstadoPago() == Estudiante.EstadoPago.SIN_MEMBRESIA) continue;
+            try {
+                LocalDateTime ahora = LocalDateTime.now(ZONA_CO);
+                List<Membresia> mems = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
+                for (Membresia m : mems) {
+                    LocalDate fechaIniAnt = m.getFechaInicio();
+                    LocalDate fechaFinAnt = m.getFechaFin();
+                    Boolean estadoAntM   = m.getEstado();
+                    guardarHistorial(m, estudiante,
+                            fechaIniAnt, fechaFinAnt, estadoAntM,
+                            null, null, false,
+                            "CORRECCION_INACTIVO_MANUAL", "LAMBDA");
+                    m.setEstado(false);
+                    m.setFechaInicio(null);
+                    m.setFechaFin(null);
+                    m.setFechaUltimoCambio(ahora);
+                    m.setMotivoCambio("CORRECCION_INACTIVO_MANUAL");
+                    membresiaRepository.save(m);
+                }
+                Estudiante.EstadoPago estadoAntEs = estudiante.getEstadoPago();
+                estudiante.setEstadoPago(Estudiante.EstadoPago.SIN_MEMBRESIA);
+                estudianteRepository.save(estudiante);
+                corregidos++;
+                log.info("   🔧 {} corregido: inactivo → SIN_MEMBRESIA (estadoPago anterior: {})",
+                        estudiante.getNombreCompleto(), estadoAntEs);
+            } catch (Exception e) {
+                errores++;
+                log.error("   ❌ Error corrigiendo inactivo {}: {}", estudiante.getIdEstudiante(), e.getMessage());
+            }
+        }
+
         List<Estudiante> todosActivos = estudianteRepository.findByEstado(true);
         for (Estudiante estudiante : todosActivos) {
-            // COMPROMISO_PAGO se maneja exclusivamente en Fase 3
+            // COMPROMISO_PAGO se maneja en Fase 3; SIN_MEMBRESIA son siempre inactivos
             if (estudiante.getEstadoPago() == Estudiante.EstadoPago.COMPROMISO_PAGO) continue;
+            if (estudiante.getEstadoPago() == Estudiante.EstadoPago.SIN_MEMBRESIA) continue;
 
             try {
                 List<Membresia> mems = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
@@ -242,14 +281,63 @@ public class TareasInternasService {
             }
         }
 
-        log.info("📊 Resultado: {} corregidos, {} actualizados a EN_MORA, {} omitidos, {} errores",
-                corregidos, actualizados, omitidos, errores);
+        // ── FASE 4: EN_MORA > 15 días → inactivar estudiante + quitar membresías ──
+        int inactivados = 0;
+        if (!inactivarMora15Dias) {
+            log.info("📋 Fase 4 - deshabilitada (app.tareas.inactivar-mora-15-dias=false)");
+        } else {
+        LocalDate limite15Dias = hoy.minusDays(15);
+        log.info("📋 Fase 4 - EN_MORA >15 días → inactivar...");
+        for (Estudiante estudiante : todosActivos) {
+            if (estudiante.getEstadoPago() != Estudiante.EstadoPago.EN_MORA) continue;
+            try {
+                List<Membresia> mems = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
+                Membresia reciente = mems.stream()
+                        .filter(m -> m.getFechaFin() != null)
+                        .max(java.util.Comparator.comparing(Membresia::getFechaFin))
+                        .orElse(null);
+                if (reciente == null || !reciente.getFechaFin().isBefore(limite15Dias)) continue;
+
+                // Desactivar todas las membresías: limpiar fechas para que WompiService cree nueva
+                LocalDateTime ahora = LocalDateTime.now(ZONA_CO);
+                for (Membresia m : mems) {
+                    LocalDate fechaIniAnt = m.getFechaInicio();
+                    LocalDate fechaFinAnt = m.getFechaFin();
+                    Boolean estadoAntM   = m.getEstado();
+                    guardarHistorial(m, estudiante,
+                            fechaIniAnt, fechaFinAnt, estadoAntM,
+                            null, null, false,
+                            "INACTIVACION_15_DIAS_MORA", "LAMBDA");
+                    m.setEstado(false);
+                    m.setFechaInicio(null);
+                    m.setFechaFin(null);
+                    m.setFechaUltimoCambio(ahora);
+                    m.setMotivoCambio("INACTIVACION_15_DIAS_MORA");
+                    membresiaRepository.save(m);
+                }
+                estudiante.setEstado(false);
+                estudiante.setEstadoPago(Estudiante.EstadoPago.SIN_MEMBRESIA);
+                estudianteRepository.save(estudiante);
+                inactivados++;
+                log.info("   🚫 {} → INACTIVADO (EN_MORA desde {}, >15 días)",
+                        estudiante.getNombreCompleto(), reciente.getFechaFin().format(FORMATTER));
+            } catch (Exception e) {
+                errores++;
+                log.error("   ❌ Error inactivando estudiante {}: {}", estudiante.getIdEstudiante(), e.getMessage());
+            }
+        }
+        log.info("📋 Fase 4 completada: {} estudiantes inactivados", inactivados);
+        } // fin if inactivarMora15Dias
+
+        log.info("📊 Resultado: {} corregidos, {} actualizados a EN_MORA, {} inactivados, {} omitidos, {} errores",
+                corregidos, actualizados, inactivados, omitidos, errores);
 
         Map<String, Object> resultado = new HashMap<>();
         resultado.put("tarea", "actualizacion_estados");
         resultado.put("fecha", hoy.toString());
         resultado.put("corregidos", corregidos);
         resultado.put("actualizados", actualizados);
+        resultado.put("inactivados", inactivados);
         resultado.put("omitidos", omitidos);
         resultado.put("errores", errores);
         resultado.put("timestamp", LocalDateTime.now().toString());
@@ -628,7 +716,8 @@ public class TareasInternasService {
                         membresia.getFechaInicio(), membresia.getFechaFin());
 
                 if (totalMeses > mesesPeriodoActual) {
-                    LocalDate nuevaFechaFin = membresia.getFechaInicio().plusMonths(totalMeses);
+                    int mesesExtra = totalMeses - mesesPeriodoActual;
+                    LocalDate nuevaFechaFin = membresia.getFechaFin().plusMonths(mesesExtra);
                     LocalDate fechaFinAnteriorRec = membresia.getFechaFin();
                     Boolean estadoAnteriorRec = membresia.getEstado();
                     log.info("   🔄 {} | {} → {} (pagos={}m, período={}m)",
@@ -770,7 +859,11 @@ public class TareasInternasService {
                                 .sum();
 
                         if (totalMesesApp > 0) {
-                            LocalDate nuevaFechaFin = fechaInicio.plusMonths(totalMesesApp);
+                            int mesesPeriodoActualCE = calcularMesesPeriodoInterno(fechaInicio, fechaFinAnterior);
+                            int deltaCE = totalMesesApp - mesesPeriodoActualCE;
+                            LocalDate nuevaFechaFin = fechaFinAnterior != null
+                                    ? fechaFinAnterior.plusMonths(deltaCE)
+                                    : fechaInicio.plusMonths(totalMesesApp);
                             if (!nuevaFechaFin.equals(fechaFinAnterior)) {
                                 Boolean estadoAnteriorCE = membresia.getEstado();
                                 Boolean estadoNuevoCE = !nuevaFechaFin.isBefore(hoy);

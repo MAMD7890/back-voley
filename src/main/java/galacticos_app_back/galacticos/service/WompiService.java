@@ -2191,7 +2191,10 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             }
             final Plan planFinal = planEncontrado;
 
-            List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
+            List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante())
+                    .stream()
+                    .filter(m -> Boolean.TRUE.equals(m.getEstado()))
+                    .collect(java.util.stream.Collectors.toList());
 
             if (membresias != null && !membresias.isEmpty()) {
                 Membresia membresia = membresias.stream()
@@ -2236,12 +2239,11 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         log.info("✅ Período cubierto → siguiente período para {} | {} → {}",
                                 estudiante.getNombreCompleto(), nuevaFechaInicio, nuevaFechaFin);
                     } else {
-                        int totalMeses  = mesesExistentes + mesesNuevoPago;
-                        LocalDate nuevaFechaFin = fechaInicio.plusMonths(totalMeses);
+                        LocalDate nuevaFechaFin = fechaFin.plusMonths(mesesNuevoPago);
                         membresia.setFechaFin(nuevaFechaFin);
-                        log.info("✅ Período extendido para {} → fechaFin: {} ({}+{} meses desde {})",
+                        log.info("✅ Período extendido para {} → fechaFin: {} (+{} meses desde {})",
                                 estudiante.getNombreCompleto(), nuevaFechaFin,
-                                mesesExistentes, mesesNuevoPago, fechaInicio);
+                                mesesNuevoPago, fechaFin);
                     }
                 }
 

@@ -239,7 +239,8 @@ public class Estudiante {
         AL_DIA,
         EN_MORA,
         COMPROMISO_PAGO,
-        DECLINADO
+        DECLINADO,
+        SIN_MEMBRESIA
     }
     
     public enum Sexo {
