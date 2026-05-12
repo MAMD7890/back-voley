@@ -81,7 +81,14 @@ public class EstudianteService {
 
     @Autowired
     private MembresiaHistorialRepository membresiaHistorialRepository;
-    
+
+    @Autowired
+    private MembresiaCoreService membresiaCoreService;
+
+    /** true → flujo MembresiaCore; false → flujo legado tabla membresia */
+    @org.springframework.beans.factory.annotation.Value("${app.membresia.usar-core:false}")
+    private boolean usarMembresiaCore;
+
     // Obtener todos los estudiantes
     public List<Estudiante> obtenerTodos() {
         return estudianteRepository.findAll();
@@ -781,9 +788,14 @@ public class EstudianteService {
                 // Inactivar: limpia membresías y marca SIN_MEMBRESIA
                 desactivarMembresiasEstudiante(estudiante, "ESTUDIANTE_INACTIVADO");
             } else {
-                // Reactivar: PENDIENTE + reinicia fecha de registro para la gracia de 5 días
-                estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
-                estudiante.setFechaRegistro(LocalDate.now());
+                // Reactivar: restaura esActiva en MembresiaCore y aplica el estadoPago resultante
+                try {
+                    Estudiante.EstadoPago estadoPagoReactivado =
+                            membresiaCoreService.reactivarEstudiante(estudiante.getIdEstudiante());
+                    estudiante.setEstadoPago(estadoPagoReactivado);
+                } catch (Exception e) {
+                    System.err.println("[EstudianteService] Error reactivando MembresiaCore: " + e.getMessage());
+                }
             }
         } else if (estudianteActualizado.getEstadoPago() != null) {
             estudiante.setEstadoPago(estudianteActualizado.getEstadoPago());
@@ -878,13 +890,14 @@ public class EstudianteService {
     }
     
     // Desactivar estudiante
+    @org.springframework.transaction.annotation.Transactional
     public Estudiante desactivar(Integer id) {
-        Optional<Estudiante> estudiante = estudianteRepository.findById(id);
-        if (estudiante.isPresent()) {
-            estudiante.get().setEstado(false);
-            return estudianteRepository.save(estudiante.get());
-        }
-        return null;
+        Optional<Estudiante> opt = estudianteRepository.findById(id);
+        if (opt.isEmpty()) return null;
+        Estudiante estudiante = opt.get();
+        estudiante.setEstado(false);
+        desactivarMembresiasEstudiante(estudiante, "ESTUDIANTE_INACTIVADO");
+        return estudianteRepository.save(estudiante);
     }
     
     // ================== NUEVOS MÉTODOS PARA ACTUALIZACIÓN DE ESTUDIANTES ==================
@@ -1321,6 +1334,13 @@ public class EstudianteService {
         System.out.println(String.format("Estado de pago cambiado manualmente - Estudiante: %s, De: %s, A: %s, Observación: %s",
                 estudiante.getNombreCompleto(), estadoAnterior, cambioDTO.getNuevoEstado(), cambioDTO.getObservacion()));
 
+        // Crear registro en MembresiaCore si aplica (no bloquea el flujo si falla)
+        try {
+            membresiaCoreService.cambiarEstadoPago(idEstudiante, cambioDTO);
+        } catch (Exception e) {
+            System.err.println("[EstudianteService] Error sincronizando MembresiaCore: " + e.getMessage());
+        }
+
         return estudianteActualizado;
     }
 
@@ -1448,6 +1468,108 @@ public class EstudianteService {
     }
 
     /**
+     * Cambia fechaInicio y/o fechaFin de la membresía legacy (tabla membresia).
+     * Al menos uno de los dos parámetros debe ser no-nulo.
+     * Reglas:
+     * - Si la fechaFin resultante >= hoy → membresia.estado=true, estudiante=AL_DIA
+     * - Si la fechaFin resultante < hoy  → membresia.estado=false, estudiante=EN_MORA
+     * - Si solo se cambia fechaInicio, el estado de la membresía no cambia.
+     * - Guarda historial de cambio.
+     */
+    @Transactional
+    public Map<String, Object> cambiarFechasMembresia(Integer idEstudiante,
+                                                       LocalDate nuevaFechaInicio,
+                                                       LocalDate nuevaFechaFin) {
+        if (nuevaFechaInicio == null && nuevaFechaFin == null) {
+            throw new IllegalArgumentException("Debe enviar al menos fechaInicio o fechaFin");
+        }
+
+        Estudiante estudiante = estudianteRepository.findById(idEstudiante)
+                .orElseThrow(() -> new RuntimeException("Estudiante no encontrado con ID: " + idEstudiante));
+
+        List<Membresia> membresias = membresiaRepository.findByEstudianteIdEstudiante(idEstudiante);
+        if (membresias == null || membresias.isEmpty()) {
+            throw new RuntimeException("El estudiante no tiene membresía registrada");
+        }
+
+        Membresia membresia = membresias.stream()
+                .filter(m -> m.getFechaFin() != null)
+                .max(java.util.Comparator.comparing(Membresia::getFechaFin))
+                .orElseThrow(() -> new RuntimeException("No se encontró membresía con fecha de vencimiento"));
+
+        LocalDate fechaInicioAnterior = membresia.getFechaInicio();
+        LocalDate fechaFinAnterior    = membresia.getFechaFin();
+        Boolean   estadoAnterior      = membresia.getEstado();
+
+        // Validar que fechaInicio no sea posterior a fechaFin resultante
+        LocalDate inicioFinal = nuevaFechaInicio != null ? nuevaFechaInicio : fechaInicioAnterior;
+        LocalDate finFinal    = nuevaFechaFin    != null ? nuevaFechaFin    : fechaFinAnterior;
+        if (inicioFinal != null && finFinal != null && inicioFinal.isAfter(finFinal)) {
+            throw new IllegalArgumentException(
+                    "fechaInicio (" + inicioFinal + ") no puede ser posterior a fechaFin (" + finFinal + ")");
+        }
+
+        if (nuevaFechaInicio != null) {
+            membresia.setFechaInicio(nuevaFechaInicio);
+        }
+        if (nuevaFechaFin != null) {
+            membresia.setFechaFin(nuevaFechaFin);
+        }
+
+        LocalDate hoy = LocalDate.now(ZoneId.of("America/Bogota"));
+        boolean membresiaActiva = finFinal != null && !finFinal.isBefore(hoy);
+        membresia.setEstado(membresiaActiva);
+        membresia.setAjustadoManualmente(true);
+        membresia.setFechaUltimoCambio(LocalDateTime.now(ZoneId.of("America/Bogota")));
+        membresia.setMotivoCambio("CAMBIO_FECHAS_MANUAL");
+        membresiaRepository.save(membresia);
+
+        // Actualizar estadoPago del estudiante según la nueva vigencia
+        Estudiante.EstadoPago estadoPagoAnterior = estudiante.getEstadoPago();
+        Estudiante.EstadoPago nuevoEstadoPago;
+        if (estudiante.getEstadoPago() == Estudiante.EstadoPago.COMPROMISO_PAGO) {
+            nuevoEstadoPago = Estudiante.EstadoPago.COMPROMISO_PAGO;
+        } else if (membresiaActiva) {
+            nuevoEstadoPago = Estudiante.EstadoPago.AL_DIA;
+        } else {
+            nuevoEstadoPago = Estudiante.EstadoPago.EN_MORA;
+        }
+
+        if (nuevoEstadoPago != estadoPagoAnterior) {
+            estudiante.setEstadoPago(nuevoEstadoPago);
+            estudiante.setCambiadoManualmente(false);
+            estudianteRepository.save(estudiante);
+        }
+
+        membresiaHistorialRepository.save(MembresiaHistorial.builder()
+                .membresia(membresia)
+                .estudiante(estudiante)
+                .fechaInicioAnterior(fechaInicioAnterior)
+                .fechaFinAnterior(fechaFinAnterior)
+                .estadoAnterior(estadoAnterior)
+                .fechaInicioNueva(inicioFinal)
+                .fechaFinNueva(finFinal)
+                .estadoNuevo(membresiaActiva)
+                .motivo("CAMBIO_FECHAS_MANUAL")
+                .origen("ADMIN")
+                .fechaCambio(LocalDateTime.now(ZoneId.of("America/Bogota")))
+                .build());
+
+        Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        resp.put("idEstudiante", idEstudiante);
+        resp.put("nombreEstudiante", estudiante.getNombreCompleto());
+        resp.put("idMembresia", membresia.getIdMembresia());
+        resp.put("fechaInicioAnterior", fechaInicioAnterior != null ? fechaInicioAnterior.toString() : null);
+        resp.put("fechaInicioNueva", inicioFinal != null ? inicioFinal.toString() : null);
+        resp.put("fechaFinAnterior", fechaFinAnterior != null ? fechaFinAnterior.toString() : null);
+        resp.put("fechaFinNueva", finFinal != null ? finFinal.toString() : null);
+        resp.put("membresiaActiva", membresiaActiva);
+        resp.put("estadoPagoAnterior", estadoPagoAnterior != null ? estadoPagoAnterior.name() : null);
+        resp.put("estadoPagoNuevo", nuevoEstadoPago.name());
+        return resp;
+    }
+
+    /**
      * Registra un pago en efectivo y actualiza el estado del estudiante
      * @param pagoDTO DTO con la información del pago
      * @return Pago registrado
@@ -1457,7 +1579,6 @@ public class EstudianteService {
         Estudiante estudiante = estudianteRepository.findById(pagoDTO.getIdEstudiante())
                 .orElseThrow(() -> new RuntimeException("Estudiante no encontrado con ID: " + pagoDTO.getIdEstudiante()));
 
-        // Crear el registro de pago
         Pago pago = new Pago();
         pago.setEstudiante(estudiante);
         pago.setMesPagado(pagoDTO.getMesPagado());
@@ -1465,23 +1586,36 @@ public class EstudianteService {
         pago.setMetodoPago(Pago.MetodoPago.EFECTIVO);
         pago.setReferenciaPago(pagoDTO.getReferenciaPago() != null ? pagoDTO.getReferenciaPago() :
                 "EFECT-" + pagoDTO.getIdEstudiante() + "-" + System.currentTimeMillis());
-        pago.setFechaPago(LocalDate.now());
-        pago.setHoraPago(LocalTime.now());
+        pago.setFechaPago(LocalDate.now(ZoneId.of("America/Bogota")));
+        pago.setHoraPago(LocalTime.now(ZoneId.of("America/Bogota")));
         pago.setEstadoPago(Pago.EstadoPago.PAGADO);
-
         Pago pagoGuardado = pagoRepository.save(pago);
 
-        // Actualizar estado del estudiante a AL_DIA y limpiar flags manuales
-        estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
-        estudiante.setCambiadoManualmente(false);
-        estudiante.setFechaLimiteCompromiso(null);
-        estudianteRepository.save(estudiante);
+        if (usarMembresiaCore) {
+            // Flujo nuevo: crea/actualiza MembresiaCore (igual que Wompi)
+            try {
+                membresiaCoreService.crearMembresiaParaPago(
+                        estudiante, pagoGuardado,
+                        galacticos_app_back.galacticos.entity.MembresiaCore.TipoMembresia.EFECTIVO);
+            } catch (Exception e) {
+                System.err.println("[EstudianteService] MembresiaCore no actualizado para pago "
+                        + pagoGuardado.getIdPago() + ": " + e.getMessage());
+                // Fallback si falla MembresiaCore
+                estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                estudiante.setCambiadoManualmente(false);
+                estudiante.setFechaLimiteCompromiso(null);
+                estudianteRepository.save(estudiante);
+            }
+        } else {
+            // Flujo legado
+            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+            estudiante.setCambiadoManualmente(false);
+            estudiante.setFechaLimiteCompromiso(null);
+            estudianteRepository.save(estudiante);
+        }
 
-        // Actualizar membresía si existe
+        // Siempre actualiza tabla membresia legacy
         actualizarMembresiaAlPagar(estudiante.getIdEstudiante());
-
-        System.out.println(String.format("Pago en efectivo registrado - Estudiante: %s, Mes: %s, Valor: %s",
-                estudiante.getNombreCompleto(), pagoDTO.getMesPagado(), pagoDTO.getValor()));
 
         return pagoGuardado;
     }
@@ -2027,6 +2161,7 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
             // Si diaPagoMes está definido, la fecha de vencimiento es ese día del mes actual
             // (o del siguiente mes si ese día ya pasó)
             LocalDate fechaFin;
+            int diaPagoEfectivo;
             if (dto.getDiaPagoMes() != null && dto.getDiaPagoMes() >= 1 && dto.getDiaPagoMes() <= 31) {
                 LocalDate hoy = LocalDate.now();
                 try {
@@ -2036,10 +2171,15 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                     // El día no existe en este mes (ej: 31 en febrero) → último día del mes
                     fechaFin = hoy.withDayOfMonth(hoy.lengthOfMonth());
                 }
+                diaPagoEfectivo = dto.getDiaPagoMes();
             } else {
                 fechaFin = LocalDate.now().plusMonths(1);
+                diaPagoEfectivo = fechaFin.getDayOfMonth();
             }
             membresia.setFechaFin(fechaFin);
+            // Guardar billing anchor en el nuevo campo
+            estudianteGuardado.setDiaPago(diaPagoEfectivo);
+            estudianteRepository.save(estudianteGuardado);
             membresia.setValorMensual(new BigDecimal("80000"));
             membresia.setEstado(false);
             
@@ -2073,7 +2213,8 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
 
     /**
      * Desactiva todas las membresías activas de un estudiante y guarda historial.
-     * Se usa al inactivar un estudiante (manual o por 15 días de mora).
+     * Se usa al inactivar un estudiante manualmente.
+     * En MembresiaCore: quita esActiva del registro activo y mantiene EN_MORA.
      */
     @org.springframework.transaction.annotation.Transactional
     public void desactivarMembresiasEstudiante(Estudiante estudiante, String motivo) {
@@ -2084,7 +2225,6 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
             LocalDate fechaInicioAnt = m.getFechaInicio();
             LocalDate fechaFinAnt    = m.getFechaFin();
             Boolean estadoAnt        = m.getEstado();
-            // Guardar historial antes de borrar las fechas
             membresiaHistorialRepository.save(MembresiaHistorial.builder()
                     .membresia(m)
                     .estudiante(estudiante)
@@ -2098,7 +2238,6 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
                     .origen("ADMIN")
                     .fechaCambio(ahora)
                     .build());
-            // Limpiar fechas y desactivar — WompiService las ignorará al filtrar estado=true
             m.setEstado(false);
             m.setFechaInicio(null);
             m.setFechaFin(null);
@@ -2106,7 +2245,17 @@ public ExcelImportResponseDTO procesarImportacionExcelConUsuarios(
             m.setMotivoCambio(motivo);
             membresiaRepository.save(m);
         }
-        estudiante.setEstadoPago(Estudiante.EstadoPago.SIN_MEMBRESIA);
+
+        // Quitar esActiva del registro MembresiaCore activo y conservar EN_MORA
+        try {
+            membresiaCoreService.inactivarEstudiante(estudiante.getIdEstudiante());
+        } catch (Exception e) {
+            System.err.println("[EstudianteService] Error inactivando MembresiaCore para "
+                    + estudiante.getIdEstudiante() + ": " + e.getMessage());
+        }
+
+        // estadoPago no se toca al inactivar: refleja la deuda real del estudiante.
+        // La membresía MembresiaCore mantiene el estado concreto (EN_MORA, PAGADA, etc.).
     }
 
     /**

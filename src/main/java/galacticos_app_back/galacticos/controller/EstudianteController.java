@@ -455,6 +455,42 @@ public class EstudianteController {
     }
 
     /**
+     * Cambiar fechaInicio y/o fechaFin de la membresía legacy en un solo llamado.
+     * PATCH /api/estudiantes/{id}/membresia/fechas
+     * Body: { "fechaInicio": "2026-04-01", "fechaFin": "2026-07-01" }  (al menos uno requerido)
+     * Si fechaFin >= hoy → membresía activa + estudiante AL_DIA
+     * Si fechaFin <  hoy → membresía inactiva + estudiante EN_MORA
+     */
+    @PatchMapping("/{id}/membresia/fechas")
+    public ResponseEntity<?> cambiarFechasMembresia(
+            @PathVariable Integer id,
+            @RequestBody Map<String, String> body) {
+        try {
+            String rawInicio = body.get("fechaInicio");
+            String rawFin    = body.get("fechaFin");
+            if (rawInicio == null && rawFin == null) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Debe enviar al menos 'fechaInicio' o 'fechaFin' (formato: yyyy-MM-dd)"));
+            }
+            LocalDate nuevaFechaInicio = rawInicio != null ? LocalDate.parse(rawInicio) : null;
+            LocalDate nuevaFechaFin    = rawFin    != null ? LocalDate.parse(rawFin)    : null;
+            Map<String, Object> resultado = estudianteService.cambiarFechasMembresia(id, nuevaFechaInicio, nuevaFechaFin);
+            return ResponseEntity.ok(resultado);
+        } catch (java.time.format.DateTimeParseException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Formato de fecha inválido. Use yyyy-MM-dd (ej: 2026-05-01)"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            String msg = e.getMessage();
+            if (msg != null && (msg.contains("no encontrado") || msg.contains("no tiene membresía"))) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", msg));
+            }
+            return ResponseEntity.badRequest().body(Map.of("error", msg));
+        }
+    }
+
+    /**
      * Cambiar fecha de inicio de membresía
      * PATCH /api/estudiantes/{id}/membresia/fecha-inicio
      * Body: { "fechaInicio": "2026-01-15" }

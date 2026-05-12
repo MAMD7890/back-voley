@@ -206,6 +206,9 @@ public class Estudiante {
     @Column
     private java.time.LocalDate fechaLimiteCompromiso;
 
+    @Column
+    private Integer diaPago;
+
     /**
      * Fecha de inicio del período de gracia de 5 días.
      * Se establece automáticamente al crear el registro vía @PrePersist.
