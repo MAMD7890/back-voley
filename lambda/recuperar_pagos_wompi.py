@@ -1,21 +1,22 @@
 """
 Lambda: recuperar_pagos_wompi
 ==============================
-Ejecución periódica (recomendado: diaria o semanal via EventBridge).
-Siempre consulta los últimos 30 días desde la fecha de ejecución,
-recuperando pagos aprobados en Wompi que no quedaron registrados en la BD.
+Ejecución diaria via EventBridge.
+Consulta los últimos 2 días de transacciones de Wompi y registra
+los pagos de membresías (referencias PAY-) que no quedaron registrados en la BD.
+Solo procesa pagos con referencia PAY-; los demás (uniformes, links externos) son ignorados.
 
 Llama a POST /api/wompi/recuperar-pagos?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
 Recorre TODAS las páginas de transacciones de Wompi en el rango indicado.
 Por cada transacción APPROVED no registrada, crea el pago y actualiza
-el estado del estudiante a AL_DIA.
+la membresía del estudiante (MembresiaCore si app.membresia.usar-core=true).
 
 Variables de entorno requeridas:
   BACKEND_URL      → https://tu-dominio.com   (sin barra final)
   INTERNAL_API_KEY → clave configurada en app.internal.api-key
 
 Variable de entorno opcional:
-  DIAS_ATRAS       → días hacia atrás a consultar (default: 30)
+  DIAS_ATRAS       → días hacia atrás a consultar (default: 2)
 """
 
 import json
@@ -35,7 +36,7 @@ def lambda_handler(event, context):
         print("ERROR: BACKEND_URL e INTERNAL_API_KEY son requeridos")
         return {"statusCode": 500, "body": "Variables de entorno no configuradas"}
 
-    dias_atras = int(os.environ.get("DIAS_ATRAS", "30"))
+    dias_atras = int(os.environ.get("DIAS_ATRAS", "2"))
     hasta = date.today()
     desde = hasta - timedelta(days=dias_atras)
 
@@ -44,7 +45,7 @@ def lambda_handler(event, context):
 
     url = f"{backend_url}{ENDPOINT}?desde={desde_str}&hasta={hasta_str}"
     print(f"Llamando a: {url}")
-    print(f"Rango consultado: {desde_str} → {hasta_str} ({dias_atras} días)")
+    print(f"Rango consultado: {desde_str} → {hasta_str} ({dias_atras} dia(s))")
 
     req = urllib.request.Request(
         url=url,

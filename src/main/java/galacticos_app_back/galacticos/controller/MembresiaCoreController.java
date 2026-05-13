@@ -1,6 +1,6 @@
 package galacticos_app_back.galacticos.controller;
 
-import galacticos_app_back.galacticos.entity.MembresiaCore;
+import galacticos_app_back.galacticos.dto.MembresiaCoreDTO;
 import galacticos_app_back.galacticos.entity.Pago;
 import galacticos_app_back.galacticos.service.MembresiaCoreService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,12 +25,12 @@ public class MembresiaCoreController {
     // ─── Endpoint público (autenticado por JWT) ───────────────────────────────
 
     @GetMapping("/api/membresias-core/estudiante/{id}/historico")
-    public ResponseEntity<List<MembresiaCore>> obtenerHistorico(@PathVariable Integer id) {
+    public ResponseEntity<List<MembresiaCoreDTO>> obtenerHistorico(@PathVariable Integer id) {
         return ResponseEntity.ok(membresiaCoreService.obtenerHistorico(id));
     }
 
     @GetMapping("/api/membresias-core/estudiante/{id}/activa")
-    public ResponseEntity<MembresiaCore> obtenerActiva(@PathVariable Integer id) {
+    public ResponseEntity<MembresiaCoreDTO> obtenerActiva(@PathVariable Integer id) {
         return membresiaCoreService.obtenerMembresiaActiva(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
@@ -104,7 +104,7 @@ public class MembresiaCoreController {
             }
             LocalDate nuevaFechaInicio = rawInicio != null ? LocalDate.parse(rawInicio) : null;
             LocalDate nuevaFechaFin    = rawFin    != null ? LocalDate.parse(rawFin)    : null;
-            MembresiaCore actualizada = membresiaCoreService.cambiarFechas(id, nuevaFechaInicio, nuevaFechaFin);
+            MembresiaCoreDTO actualizada = membresiaCoreService.cambiarFechas(id, nuevaFechaInicio, nuevaFechaFin);
             return ResponseEntity.ok(actualizada);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -121,9 +121,34 @@ public class MembresiaCoreController {
             Integer idEstudiante = (Integer) body.get("idEstudiante");
             LocalDate fechaLimite = LocalDate.parse((String) body.get("fechaLimiteCompromiso"));
             String observacion = (String) body.get("observacion");
-            MembresiaCore acuerdo = membresiaCoreService.crearAcuerdoPago(
+            MembresiaCoreDTO acuerdo = membresiaCoreService.crearAcuerdoPago(
                     idEstudiante, fechaLimite, observacion);
             return ResponseEntity.ok(acuerdo);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // ─── Cambiar fechas por idEstudiante ──────────────────────────────────────
+
+    @PatchMapping("/api/membresias-core/estudiante/{idEstudiante}/fechas")
+    public ResponseEntity<?> cambiarFechasPorEstudiante(
+            @PathVariable Integer idEstudiante,
+            @RequestBody Map<String, String> body) {
+        try {
+            String rawInicio = body.get("fechaInicio");
+            String rawFin    = body.get("fechaFin");
+            if (rawInicio == null && rawFin == null) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Debe enviar al menos fechaFin"));
+            }
+            LocalDate nuevaFechaInicio = rawInicio != null ? LocalDate.parse(rawInicio) : null;
+            LocalDate nuevaFechaFin    = rawFin    != null ? LocalDate.parse(rawFin)    : null;
+            MembresiaCoreDTO resultado = membresiaCoreService.cambiarFechasPorEstudiante(
+                    idEstudiante, nuevaFechaInicio, nuevaFechaFin);
+            return ResponseEntity.ok(resultado);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }

@@ -4,6 +4,7 @@ import galacticos_app_back.galacticos.config.WompiConfig;
 import galacticos_app_back.galacticos.dto.wompi.*;
 import galacticos_app_back.galacticos.entity.Estudiante;
 import galacticos_app_back.galacticos.entity.Membresia;
+import galacticos_app_back.galacticos.entity.MembresiaCore;
 import galacticos_app_back.galacticos.entity.MembresiaHistorial;
 import galacticos_app_back.galacticos.entity.Pago;
 import galacticos_app_back.galacticos.entity.Plan;
@@ -16,6 +17,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -57,6 +59,10 @@ public class WompiService {
     private final MembresiaHistorialRepository membresiaHistorialRepository;
     private final PlanRepository planRepository;
     private final ObjectMapper objectMapper;
+    private final MembresiaCoreService membresiaCoreService;
+
+    @Value("${app.membresia.usar-core:false}")
+    private boolean usarMembresiaCore;
     
     /**
      * Genera la firma de integridad para el widget de Wompi
@@ -1187,9 +1193,20 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
 
                                 if (pago.getEstudiante() != null) {
                                     Estudiante est = pago.getEstudiante();
-                                    est.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
-                                    estudianteRepository.save(est);
+                                    if (!usarMembresiaCore) {
+                                        est.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                                        estudianteRepository.save(est);
+                                    }
                                     activarMembresiaEstudiante(est);
+                                    if (usarMembresiaCore) {
+                                        try {
+                                            membresiaCoreService.crearMembresiaParaPago(
+                                                    est, pago, MembresiaCore.TipoMembresia.ONLINE);
+                                        } catch (Exception ex) {
+                                            log.warn("MembresiaCore no actualizada para pago {}: {}",
+                                                    pago.getIdPago(), ex.getMessage());
+                                        }
+                                    }
                                     detalle.put("estudiante", est.getNombreCompleto());
                                     detalle.put("membresiaActivada", true);
                                 }
@@ -1338,15 +1355,26 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             pago.setHoraPago(fechaColombia.toLocalTime());
             
             Pago pagoGuardado = pagoRepository.save(pago);
-            
+
             // Actualizar estudiante y activar membresía
-            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
-            estudianteRepository.save(estudiante);
+            if (!usarMembresiaCore) {
+                estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                estudianteRepository.save(estudiante);
+            }
             activarMembresiaEstudiante(estudiante);
-            
-            log.info("✅ Pago creado desde transacción Wompi - ID: {}, Estudiante: {}, Membresía activada", 
+            if (usarMembresiaCore) {
+                try {
+                    membresiaCoreService.crearMembresiaParaPago(
+                            estudiante, pagoGuardado, MembresiaCore.TipoMembresia.ONLINE);
+                } catch (Exception ex) {
+                    log.warn("MembresiaCore no actualizada para pago {}: {}",
+                            pagoGuardado.getIdPago(), ex.getMessage());
+                }
+            }
+
+            log.info("✅ Pago creado desde transacción Wompi - ID: {}, Estudiante: {}, Membresía activada",
                 pagoGuardado.getIdPago(), estudiante.getNombreCompleto());
-            
+
             return pagoGuardado;
             
         } catch (Exception e) {

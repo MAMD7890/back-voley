@@ -26,7 +26,7 @@ logger.setLevel(logging.INFO)
 BACKEND_URL = os.environ["BACKEND_URL"].rstrip("/")
 INTERNAL_API_KEY = os.environ["INTERNAL_API_KEY"]
 ENDPOINT = f"{BACKEND_URL}/api/internal/membresias-core/migracion"
-TIMEOUT_SEG = 300  # migración puede tomar varios minutos
+TIMEOUT_SEG = 300  # la migración puede tomar varios minutos con muchos estudiantes
 
 
 def lambda_handler(event, context):
