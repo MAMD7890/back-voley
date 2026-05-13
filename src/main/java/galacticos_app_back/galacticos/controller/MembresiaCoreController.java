@@ -66,6 +66,22 @@ public class MembresiaCoreController {
         return ResponseEntity.ok(membresiaCoreService.ejecutarJob4CancelarAcuerdosVencidos());
     }
 
+    @GetMapping("/api/internal/membresias-core/jobs/revertir-membresias-indebidas/preview")
+    public ResponseEntity<Map<String, Object>> previewRevertirMembresiasIndebidas(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate fecha) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.previsualizarReversionIndebida(fecha));
+    }
+
+    @PostMapping("/api/internal/membresias-core/jobs/revertir-membresias-indebidas")
+    public ResponseEntity<Map<String, Object>> jobRevertirMembresiasIndebidas(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate fecha) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.revertirMembresiasCreadasIndebidamente(fecha));
+    }
+
     @PostMapping("/api/internal/membresias-core/jobs/recuperar-membresias-faltantes")
     public ResponseEntity<Map<String, Object>> jobRecuperarMembresiasFaltantes(
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {

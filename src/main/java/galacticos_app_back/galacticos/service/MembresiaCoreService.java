@@ -1095,6 +1095,117 @@ public class MembresiaCoreService {
         }
     }
 
+    // ─── Reversión de membresías creadas indebidamente por job ───────────────
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> previsualizarReversionIndebida(LocalDate fechaEjecucion) {
+        LocalDate fecha = fechaEjecucion != null ? fechaEjecucion : hoy();
+        java.time.LocalDateTime inicio = fecha.atStartOfDay();
+        java.time.LocalDateTime fin    = fecha.plusDays(1).atStartOfDay();
+
+        List<MembresiaCore> indebidas = membresiaCoreRepository
+                .findActivasCreadasEnRangoConPagoAnteriorA(inicio, fin, fecha);
+
+        List<Map<String, Object>> detalle = new ArrayList<>();
+
+        for (MembresiaCore mc : indebidas) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            Estudiante est = mc.getEstudiante();
+
+            item.put("idMembresiaCore", mc.getIdMembresiaCore());
+            item.put("idEstudiante", est.getIdEstudiante());
+            item.put("nombreEstudiante", est.getNombreCompleto());
+            item.put("estadoActualEstudiante", est.getEstadoPago());
+            item.put("membresiaIndebida_fechaInicio", mc.getFechaInicio());
+            item.put("membresiaIndebida_fechaFin", mc.getFechaFin());
+
+            if (mc.getPagoOrigen() != null) {
+                item.put("pagoOrigen_id", mc.getPagoOrigen().getIdPago());
+                item.put("pagoOrigen_fecha", mc.getPagoOrigen().getFechaPago());
+                item.put("pagoOrigen_referencia", mc.getPagoOrigen().getReferenciaPago());
+                item.put("pagoOrigen_valor", mc.getPagoOrigen().getValor());
+            }
+
+            List<MembresiaCore> candidatas = membresiaCoreRepository
+                    .findFinalizadasDesactivadasAntesDeId(est.getIdEstudiante(), mc.getIdMembresiaCore());
+            if (!candidatas.isEmpty()) {
+                MembresiaCore anterior = candidatas.get(0);
+                item.put("hayMembresiaAnterior", true);
+                item.put("membresiaRestaurar_id", anterior.getIdMembresiaCore());
+                item.put("membresiaRestaurar_fechaInicio", anterior.getFechaInicio());
+                item.put("membresiaRestaurar_fechaFin", anterior.getFechaFin());
+            } else {
+                item.put("hayMembresiaAnterior", false);
+            }
+
+            item.put("estadoQueQuedara", Estudiante.EstadoPago.EN_MORA.name());
+            detalle.add(item);
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("fecha", fecha.toString());
+        resultado.put("totalIndebidas", indebidas.size());
+        resultado.put("detalle", detalle);
+        return resultado;
+    }
+
+    @Transactional
+    public Map<String, Object> revertirMembresiasCreadasIndebidamente(LocalDate fechaEjecucion) {
+        LocalDate fecha = fechaEjecucion != null ? fechaEjecucion : hoy();
+        java.time.LocalDateTime inicio = fecha.atStartOfDay();
+        java.time.LocalDateTime fin    = fecha.plusDays(1).atStartOfDay();
+
+        List<MembresiaCore> indebidas = membresiaCoreRepository
+                .findActivasCreadasEnRangoConPagoAnteriorA(inicio, fin, fecha);
+
+        int revertidas = 0;
+        int sinAnterior = 0;
+        int errores = 0;
+
+        for (MembresiaCore mc : indebidas) {
+            try {
+                Estudiante est = mc.getEstudiante();
+
+                // 1. Cancelar la membresía indebida
+                mc.setEstadoMembresia(EstadoMembresia.CANCELADA);
+                mc.setEsActiva(false);
+                mc.setMotivoCambio("REVERTIDA_JOB_INDEBIDO");
+                mc.setFechaUltimoCambio(ahora());
+                membresiaCoreRepository.save(mc);
+
+                // 2. Restaurar la FINALIZADA que fue desactivada
+                List<MembresiaCore> candidatas = membresiaCoreRepository
+                        .findFinalizadasDesactivadasAntesDeId(
+                                est.getIdEstudiante(), mc.getIdMembresiaCore());
+                if (!candidatas.isEmpty()) {
+                    MembresiaCore anterior = candidatas.get(0);
+                    anterior.setEsActiva(true);
+                    anterior.setFechaUltimoCambio(ahora());
+                    membresiaCoreRepository.save(anterior);
+                } else {
+                    sinAnterior++;
+                }
+
+                // 3. Devolver al estudiante a EN_MORA
+                est.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                estudianteRepository.save(est);
+                revertidas++;
+
+            } catch (Exception e) {
+                errores++;
+            }
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("job", "RevertirMembresiasCreadasIndebidamente");
+        resultado.put("fecha", fecha.toString());
+        resultado.put("indebidas", indebidas.size());
+        resultado.put("revertidas", revertidas);
+        resultado.put("sinMembresiaAnterior", sinAnterior);
+        resultado.put("errores", errores);
+        return resultado;
+    }
+
     // ─── Job: recuperar membresías faltantes por bug de webhook ─────────────
 
     @Transactional

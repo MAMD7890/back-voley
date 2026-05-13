@@ -108,6 +108,28 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
            "AND m.estadoMembresia = 'FINALIZADA' ORDER BY m.fechaFin DESC")
     List<MembresiaCore> findFinalizadasDeEstudiante(@Param("idEstudiante") Integer idEstudiante);
 
+    // Reversión: membresías PAGADA activas creadas en un rango horario con pago anterior a una fecha
+    @Query("SELECT m FROM MembresiaCore m WHERE m.motivoCambio = 'PAGO_CONFIRMADO' " +
+           "AND m.estadoMembresia = 'PAGADA' " +
+           "AND m.esActiva = true " +
+           "AND m.fechaCreacion >= :inicio AND m.fechaCreacion < :fin " +
+           "AND m.pagoOrigen IS NOT NULL " +
+           "AND m.pagoOrigen.fechaPago < :fechaPago")
+    List<MembresiaCore> findActivasCreadasEnRangoConPagoAnteriorA(
+            @Param("inicio") java.time.LocalDateTime inicio,
+            @Param("fin") java.time.LocalDateTime fin,
+            @Param("fechaPago") LocalDate fechaPago);
+
+    // Reversión: FINALIZADA desactivada más reciente antes de una membresía dada
+    @Query("SELECT m FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante " +
+           "AND m.estadoMembresia = 'FINALIZADA' " +
+           "AND m.esActiva = false " +
+           "AND m.idMembresiaCore < :idReferencia " +
+           "ORDER BY m.idMembresiaCore DESC")
+    List<MembresiaCore> findFinalizadasDesactivadasAntesDeId(
+            @Param("idEstudiante") Integer idEstudiante,
+            @Param("idReferencia") Integer idReferencia);
+
     // Unicidad: verificar que un pago no esté ya vinculado a otra membresía
     boolean existsByPagoOrigenIdPago(Integer idPago);
 
