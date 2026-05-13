@@ -110,4 +110,7 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
 
     // Unicidad: verificar que un pago no esté ya vinculado a otra membresía
     boolean existsByPagoOrigenIdPago(Integer idPago);
+
+    // Sincronizar estados: todas las membresías marcadas como activas
+    List<MembresiaCore> findAllByEsActivaTrue();
 }

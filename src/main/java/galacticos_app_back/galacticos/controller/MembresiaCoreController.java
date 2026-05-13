@@ -66,6 +66,13 @@ public class MembresiaCoreController {
         return ResponseEntity.ok(membresiaCoreService.ejecutarJob4CancelarAcuerdosVencidos());
     }
 
+    @PostMapping("/api/internal/membresias-core/jobs/sincronizar-estados")
+    public ResponseEntity<Map<String, Object>> job5SincronizarEstados(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.ejecutarJobSincronizarEstados());
+    }
+
     @PostMapping("/api/internal/membresias-core/migracion")
     public ResponseEntity<Map<String, Object>> migrar(
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {

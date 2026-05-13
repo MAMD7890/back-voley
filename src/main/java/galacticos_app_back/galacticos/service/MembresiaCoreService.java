@@ -873,6 +873,53 @@ public class MembresiaCoreService {
         return resultado;
     }
 
+    // ─── Job 5 — Sincronizar estadoPago del estudiante con su membresía activa ─
+
+    @Transactional
+    public Map<String, Object> ejecutarJobSincronizarEstados() {
+        List<MembresiaCore> activas = membresiaCoreRepository.findAllByEsActivaTrue();
+
+        int actualizados = 0;
+        int sinCambio    = 0;
+        int errores      = 0;
+
+        for (MembresiaCore mc : activas) {
+            try {
+                Estudiante.EstadoPago esperado = resolverEstadoPago(mc);
+                Estudiante est = mc.getEstudiante();
+                if (est.getEstadoPago() != esperado) {
+                    est.setEstadoPago(esperado);
+                    estudianteRepository.save(est);
+                    actualizados++;
+                } else {
+                    sinCambio++;
+                }
+            } catch (Exception e) {
+                errores++;
+            }
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("job", "SincronizarEstados");
+        resultado.put("fecha", hoy().toString());
+        resultado.put("evaluados", activas.size());
+        resultado.put("actualizados", actualizados);
+        resultado.put("sinCambio", sinCambio);
+        resultado.put("errores", errores);
+        return resultado;
+    }
+
+    private Estudiante.EstadoPago resolverEstadoPago(MembresiaCore mc) {
+        return switch (mc.getEstadoMembresia()) {
+            case PAGADA -> Estudiante.EstadoPago.AL_DIA;
+            case PENDIENTE_PAGO -> mc.getTipoMembresia() == TipoMembresia.ACUERDO_PAGO
+                    ? Estudiante.EstadoPago.COMPROMISO_PAGO
+                    : Estudiante.EstadoPago.PENDIENTE;
+            case EN_MORA, FINALIZADA, COMPROMISO_INCUMPLIDO, CANCELADA ->
+                    Estudiante.EstadoPago.EN_MORA;
+        };
+    }
+
     // ─── Migración ────────────────────────────────────────────────────────────
 
     @Transactional
