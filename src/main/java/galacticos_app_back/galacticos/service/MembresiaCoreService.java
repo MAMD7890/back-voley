@@ -1128,17 +1128,22 @@ public class MembresiaCoreService {
 
             List<MembresiaCore> candidatas = membresiaCoreRepository
                     .findFinalizadasDesactivadasAntesDeId(est.getIdEstudiante(), mc.getIdMembresiaCore());
+            String estadoQueQuedara;
             if (!candidatas.isEmpty()) {
                 MembresiaCore anterior = candidatas.get(0);
                 item.put("hayMembresiaAnterior", true);
                 item.put("membresiaRestaurar_id", anterior.getIdMembresiaCore());
                 item.put("membresiaRestaurar_fechaInicio", anterior.getFechaInicio());
                 item.put("membresiaRestaurar_fechaFin", anterior.getFechaFin());
+                estadoQueQuedara = (anterior.getFechaFin() != null && anterior.getFechaFin().isAfter(fecha))
+                        ? Estudiante.EstadoPago.AL_DIA.name()
+                        : Estudiante.EstadoPago.EN_MORA.name();
             } else {
                 item.put("hayMembresiaAnterior", false);
+                estadoQueQuedara = Estudiante.EstadoPago.EN_MORA.name();
             }
 
-            item.put("estadoQueQuedara", Estudiante.EstadoPago.EN_MORA.name());
+            item.put("estadoQueQuedara", estadoQueQuedara);
             detalle.add(item);
         }
 
@@ -1179,15 +1184,22 @@ public class MembresiaCoreService {
                                 est.getIdEstudiante(), mc.getIdMembresiaCore());
                 if (!candidatas.isEmpty()) {
                     MembresiaCore anterior = candidatas.get(0);
+                    // Si la membresía anterior aún no ha vencido, restaurarla como PAGADA
+                    if (anterior.getFechaFin() != null && anterior.getFechaFin().isAfter(fecha)) {
+                        anterior.setEstadoMembresia(EstadoMembresia.PAGADA);
+                        est.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                    } else {
+                        est.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                    }
                     anterior.setEsActiva(true);
                     anterior.setFechaUltimoCambio(ahora());
                     membresiaCoreRepository.save(anterior);
                 } else {
                     sinAnterior++;
+                    est.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
                 }
 
-                // 3. Devolver al estudiante a EN_MORA
-                est.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                // 3. Actualizar estado del estudiante
                 estudianteRepository.save(est);
                 revertidas++;
 
