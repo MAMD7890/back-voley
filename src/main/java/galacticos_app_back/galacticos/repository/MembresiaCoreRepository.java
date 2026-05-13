@@ -103,6 +103,11 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
     @Query("SELECT m FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante AND m.esActiva = true")
     List<MembresiaCore> findActivas(@Param("idEstudiante") Integer idEstudiante);
 
+    // Última FINALIZADA del estudiante (para restaurar tras Job4 y base de continuidad de mora)
+    @Query("SELECT m FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante " +
+           "AND m.estadoMembresia = 'FINALIZADA' ORDER BY m.fechaFin DESC")
+    List<MembresiaCore> findFinalizadasDeEstudiante(@Param("idEstudiante") Integer idEstudiante);
+
     // Unicidad: verificar que un pago no esté ya vinculado a otra membresía
     boolean existsByPagoOrigenIdPago(Integer idPago);
 }

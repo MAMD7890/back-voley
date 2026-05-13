@@ -35,4 +35,15 @@ public class CambioEstadoPagoDTO {
      * Si llega esta fecha sin cambio a AL_DIA, el sistema cambia el estado a EN_MORA automáticamente.
      */
     private LocalDate fechaLimiteCompromiso;
+
+    /**
+     * Inicio del período del acuerdo. Opcional: si no se envía, se usa la fechaFin
+     * de la última FINALIZADA del estudiante.
+     */
+    private LocalDate fechaInicio;
+
+    /**
+     * Fin del período del acuerdo. Opcional: si no se envía, se calcula 1 mes desde fechaInicio.
+     */
+    private LocalDate fechaFin;
 }

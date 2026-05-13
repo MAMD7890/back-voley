@@ -106,7 +106,8 @@ public class MembresiaCore {
         EN_MORA,
         PAGADA,
         FINALIZADA,
-        CANCELADA
+        CANCELADA,
+        COMPROMISO_INCUMPLIDO
     }
 
     public enum OrigenAcuerdo {

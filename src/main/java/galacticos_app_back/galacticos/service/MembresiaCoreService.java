@@ -62,6 +62,28 @@ public class MembresiaCoreService {
         return 1;
     }
 
+    // Planes: ONLINE exacto (80k/150k/210k). EFECTIVO por rango.
+    private int calcularMesesDesdeValorPago(BigDecimal valor, Pago.MetodoPago metodo) {
+        if (valor == null) return 0;
+        BigDecimal v = valor.abs();
+        if (metodo == Pago.MetodoPago.ONLINE) {
+            if (v.compareTo(new BigDecimal("210000")) == 0) return 3;
+            if (v.compareTo(new BigDecimal("150000")) == 0) return 2;
+            if (v.compareTo(new BigDecimal("80000"))  == 0) return 1;
+            return 0;
+        } else {
+            if (v.compareTo(new BigDecimal("150000")) > 0) return 3;
+            if (v.compareTo(new BigDecimal("90000"))  > 0) return 2;
+            return 1;
+        }
+    }
+
+    // Retorna la fechaFin de la última FINALIZADA del estudiante, o null si no existe.
+    private LocalDate ultimaFechaFinFinalizada(Integer idEstudiante) {
+        List<MembresiaCore> fins = membresiaCoreRepository.findFinalizadasDeEstudiante(idEstudiante);
+        return fins.isEmpty() ? null : fins.get(0).getFechaFin();
+    }
+
     private LocalDateTime ahora() {
         return LocalDateTime.now(BOGOTA);
     }
@@ -80,92 +102,107 @@ public class MembresiaCoreService {
     @Transactional
     public MembresiaCore crearMembresiaParaPago(Estudiante estudiante, Pago pago, TipoMembresia tipo) {
         LocalDate hoy = hoy();
-        int meses = calcularMesesSegunMonto(pago.getValor());
-
-        List<TipoMembresia> tiposConvertibles = Arrays.asList(
-                TipoMembresia.MORA, TipoMembresia.PENDIENTE_REGISTRO, TipoMembresia.ACUERDO_PAGO);
-        List<EstadoMembresia> estadosConvertibles = Arrays.asList(
-                EstadoMembresia.EN_MORA, EstadoMembresia.PENDIENTE_PAGO);
+        int meses = calcularMesesDesdeValorPago(pago.getValor(), pago.getMetodoPago());
+        if (meses == 0) meses = calcularMesesSegunMonto(pago.getValor()); // fallback
 
         if (membresiaCoreRepository.existsByPagoOrigenIdPago(pago.getIdPago())) {
             throw new IllegalStateException(
                     "El pago " + pago.getIdPago() + " ya está vinculado a una membresía existente");
         }
 
-        List<MembresiaCore> convertibles = membresiaCoreRepository.findConvertibles(
-                estudiante.getIdEstudiante(), tiposConvertibles, estadosConvertibles);
+        boolean esActivo = Boolean.TRUE.equals(estudiante.getEstado());
+        Optional<MembresiaCore> activaOpt = membresiaCoreRepository
+                .findByEstudianteIdEstudianteAndEsActivaTrue(estudiante.getIdEstudiante());
 
         MembresiaCore membresia;
 
-        if (!convertibles.isEmpty()) {
-            // Paso 2a — convertir registro existente
-            membresia = convertibles.get(0);
-            LocalDate fechaInicio = membresia.getFechaInicio();
-            Integer diaPagoBox = estudiante.getDiaPago();
-            int diaPago = diaPagoBox != null ? diaPagoBox : fechaInicio.getDayOfMonth();
-            LocalDate fechaFin = calcularFechaFin(fechaInicio, meses, diaPago);
+        if (activaOpt.isPresent()) {
+            MembresiaCore activa = activaOpt.get();
+            boolean vigente = activa.getEstadoMembresia() == EstadoMembresia.PAGADA
+                    && !activa.getFechaFin().isBefore(hoy);
 
-            desactivarActual(estudiante.getIdEstudiante());
-            membresia.setEstadoMembresia(EstadoMembresia.PAGADA);
-            membresia.setTipoMembresia(tipo);
-            membresia.setFechaFin(fechaFin);
-            membresia.setPagoOrigen(pago);
-            membresia.setFechaLimiteGracia(null);
-            membresia.setFechaLimiteCompromiso(null);
-            membresia.setEsActiva(true);
-            membresia.setFechaUltimoCambio(ahora());
-            membresia.setMotivoCambio("PAGO_CONFIRMADO");
-
-        } else {
-            // Paso 2b — nueva membresía (primer pago o pago anticipado)
-            LocalDate fechaInicio;
-            int diaPago;
-
-            // Si hay membresía vigente, el nuevo período empieza al día siguiente del fin actual
-            List<MembresiaCore> vigentes = membresiaCoreRepository.findVigentesDeEstudiante(
-                    estudiante.getIdEstudiante(), hoy);
-            boolean esPagoAnticipado = !vigentes.isEmpty();
-            if (esPagoAnticipado) {
-                // La nueva membresía empieza el mismo día que termina la vigente más lejana
-                fechaInicio = vigentes.get(0).getFechaFin();
-            } else {
-                fechaInicio = pago.getFechaPago() != null ? pago.getFechaPago() : hoy;
+            if (vigente) {
+                // Pago anticipado: nuevo período encola tras la vigente
+                LocalDate fechaInicio = activa.getFechaFin();
+                int diaPago = fechaInicio.getDayOfMonth();
+                LocalDate fechaFin = calcularFechaFin(fechaInicio, meses, diaPago);
+                membresia = buildMembresia(estudiante, pago, tipo, fechaInicio, fechaFin,
+                        EstadoMembresia.PAGADA, false);
+                membresiaCoreRepository.save(membresia);
+                estudianteRepository.save(estudiante);
+                return membresia;
             }
 
-            diaPago = fechaInicio.getDayOfMonth();
+            // Activa es FINALIZADA o ACUERDO_PAGO (estudiante en mora o con acuerdo)
+            if (activa.getTipoMembresia() == TipoMembresia.ACUERDO_PAGO) {
+                activa.setEstadoMembresia(EstadoMembresia.CANCELADA);
+                activa.setMotivoCambio("PAGO_RECIBIDO");
+                activa.setFechaUltimoCambio(ahora());
+                membresiaCoreRepository.save(activa);
+            }
+            desactivarActual(estudiante.getIdEstudiante());
+
+            if (esActivo) {
+                // Continúa desde donde venció la última FINALIZADA
+                LocalDate base = ultimaFechaFinFinalizada(estudiante.getIdEstudiante());
+                if (base == null) base = pago.getFechaPago() != null ? pago.getFechaPago() : hoy;
+                int diaPago = estudiante.getDiaPago() != null ? estudiante.getDiaPago() : base.getDayOfMonth();
+                LocalDate fechaFin = calcularFechaFin(base, meses, diaPago);
+                boolean saldada = !fechaFin.isBefore(hoy);
+                EstadoMembresia estado = saldada ? EstadoMembresia.PAGADA : EstadoMembresia.FINALIZADA;
+                membresia = buildMembresia(estudiante, pago, tipo, base, fechaFin, estado, true);
+                if (saldada) {
+                    estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                    estudiante.setDiaPago(diaPago);
+                }
+            } else {
+                // Inactivo: arranque limpio
+                LocalDate fechaInicio = pago.getFechaPago() != null ? pago.getFechaPago() : hoy;
+                int diaPago = estudiante.getDiaPago() != null ? estudiante.getDiaPago() : fechaInicio.getDayOfMonth();
+                LocalDate fechaFin = calcularFechaFin(fechaInicio, meses, diaPago);
+                membresia = buildMembresia(estudiante, pago, tipo, fechaInicio, fechaFin,
+                        EstadoMembresia.PAGADA, true);
+                estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                estudiante.setDiaPago(diaPago);
+            }
+
+        } else {
+            // Sin membresía activa: primer pago
+            LocalDate fechaInicio = pago.getFechaPago() != null ? pago.getFechaPago() : hoy;
+            int diaPago = estudiante.getDiaPago() != null ? estudiante.getDiaPago() : fechaInicio.getDayOfMonth();
             LocalDate fechaFin = calcularFechaFin(fechaInicio, meses, diaPago);
-
-            membresia = new MembresiaCore();
-            membresia.setEstudiante(estudiante);
-            membresia.setEquipo(null);
-            membresia.setPlan(null);
-            membresia.setPagoOrigen(pago);
-            membresia.setTipoMembresia(tipo);
-            membresia.setEstadoMembresia(EstadoMembresia.PAGADA);
-            membresia.setFechaInicio(fechaInicio);
-            membresia.setFechaFin(fechaFin);
-            membresia.setValorMensual(pago.getValor() != null
-                    ? pago.getValor().divide(new BigDecimal(meses), 2, java.math.RoundingMode.HALF_UP)
-                    : null);
-            membresia.setFechaCreacion(ahora());
-            membresia.setFechaUltimoCambio(ahora());
-            // Pago anticipado: la activa sigue siendo la vigente; si no hay vigente, esta es la activa
-            membresia.setEsActiva(!esPagoAnticipado);
-            if (!esPagoAnticipado) desactivarActual(estudiante.getIdEstudiante());
-
-            // Actualizar billing anchor
+            membresia = buildMembresia(estudiante, pago, tipo, fechaInicio, fechaFin,
+                    EstadoMembresia.PAGADA, true);
+            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
             estudiante.setDiaPago(diaPago);
         }
 
-        // Paso 3 — activar estudiante
-        if (!Boolean.TRUE.equals(estudiante.getEstado())) {
-            estudiante.setEstado(true);
-        }
-        estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+        if (!Boolean.TRUE.equals(estudiante.getEstado())) estudiante.setEstado(true);
         estudiante.setCambiadoManualmente(false);
         estudianteRepository.save(estudiante);
-
         return membresiaCoreRepository.save(membresia);
+    }
+
+    private MembresiaCore buildMembresia(Estudiante est, Pago pago, TipoMembresia tipo,
+                                          LocalDate inicio, LocalDate fin,
+                                          EstadoMembresia estado, boolean activa) {
+        int meses = calcularMesesDesdeValorPago(pago.getValor(), pago.getMetodoPago());
+        if (meses == 0) meses = 1;
+        MembresiaCore m = new MembresiaCore();
+        m.setEstudiante(est);
+        m.setPagoOrigen(pago);
+        m.setTipoMembresia(tipo);
+        m.setEstadoMembresia(estado);
+        m.setFechaInicio(inicio);
+        m.setFechaFin(fin);
+        m.setValorMensual(pago.getValor() != null
+                ? pago.getValor().divide(new BigDecimal(meses), 2, java.math.RoundingMode.HALF_UP)
+                : null);
+        m.setEsActiva(activa);
+        m.setFechaCreacion(ahora());
+        m.setFechaUltimoCambio(ahora());
+        m.setMotivoCambio("PAGO_CONFIRMADO");
+        return m;
     }
 
     // ─── Crear acuerdo de pago ────────────────────────────────────────────────
@@ -254,50 +291,57 @@ public class MembresiaCoreService {
         estudiante.setObservacionPago(cambioDTO.getObservacion());
         estudianteRepository.save(estudiante);
 
-        // Crear registro MembresiaCore solo si el nuevo estado es COMPROMISO_PAGO
+        // Crear ACUERDO_PAGO en MembresiaCore cuando el nuevo estado es COMPROMISO_PAGO
         if (cambioDTO.getNuevoEstado() == Estudiante.EstadoPago.COMPROMISO_PAGO) {
             try {
-                List<TipoMembresia> tiposReemplazables = Arrays.asList(
-                        TipoMembresia.PENDIENTE_REGISTRO, TipoMembresia.MORA);
-                List<EstadoMembresia> estadosReemplazables = Arrays.asList(
-                        EstadoMembresia.PENDIENTE_PAGO, EstadoMembresia.EN_MORA);
+                // Buscar última FINALIZADA para usarla como base del acuerdo
+                List<MembresiaCore> finalizadas = membresiaCoreRepository
+                        .findFinalizadasDeEstudiante(idEstudiante);
 
-                List<MembresiaCore> reemplazables = membresiaCoreRepository.findConvertibles(
-                        idEstudiante, tiposReemplazables, estadosReemplazables);
-
-                if (!reemplazables.isEmpty()) {
-                    MembresiaCore reemplazable = reemplazables.get(0);
-                    OrigenAcuerdo origen = reemplazable.getTipoMembresia() == TipoMembresia.PENDIENTE_REGISTRO
-                            ? OrigenAcuerdo.DESDE_PENDIENTE : OrigenAcuerdo.DESDE_MORA;
-
-                    reemplazable.setEstadoMembresia(EstadoMembresia.CANCELADA);
-                    reemplazable.setEsActiva(false);
-                    reemplazable.setMotivoCambio("REEMPLAZADO_POR_ACUERDO");
-                    reemplazable.setFechaUltimoCambio(ahora());
-                    membresiaCoreRepository.save(reemplazable);
-
-                    MembresiaCore acuerdo = new MembresiaCore();
-                    acuerdo.setEstudiante(estudiante);
-                    acuerdo.setEquipo(reemplazable.getEquipo());
-                    acuerdo.setPlan(reemplazable.getPlan());
-                    acuerdo.setPagoOrigen(null);
-                    acuerdo.setTipoMembresia(TipoMembresia.ACUERDO_PAGO);
-                    acuerdo.setEstadoMembresia(EstadoMembresia.PENDIENTE_PAGO);
-                    acuerdo.setFechaInicio(reemplazable.getFechaInicio());
-                    acuerdo.setFechaFin(reemplazable.getFechaFin());
-                    acuerdo.setValorMensual(reemplazable.getValorMensual());
-                    acuerdo.setObservacion(cambioDTO.getObservacion());
-                    acuerdo.setFechaLimiteCompromiso(cambioDTO.getFechaLimiteCompromiso());
-                    acuerdo.setOrigenAcuerdo(origen);
-                    acuerdo.setEsActiva(true);
-                    acuerdo.setFechaCreacion(ahora());
-                    acuerdo.setFechaUltimoCambio(ahora());
-                    membresiaCoreRepository.save(acuerdo);
+                // Determinar fechaInicio del acuerdo
+                LocalDate inicioAcuerdo;
+                OrigenAcuerdo origen;
+                if (cambioDTO.getFechaInicio() != null) {
+                    inicioAcuerdo = cambioDTO.getFechaInicio();
+                    origen = finalizadas.isEmpty() ? OrigenAcuerdo.DESDE_PENDIENTE : OrigenAcuerdo.DESDE_MORA;
+                } else if (!finalizadas.isEmpty()) {
+                    inicioAcuerdo = finalizadas.get(0).getFechaFin();
+                    origen = OrigenAcuerdo.DESDE_MORA;
+                } else {
+                    inicioAcuerdo = hoy();
+                    origen = OrigenAcuerdo.DESDE_PENDIENTE;
                 }
-                // Si no hay convertible (ej: estudiante AL_DIA o sin membresía core aún),
-                // solo se cambia el estado del estudiante — sin error.
+
+                // Determinar fechaFin del acuerdo
+                int diaPago = estudiante.getDiaPago() != null
+                        ? estudiante.getDiaPago() : inicioAcuerdo.getDayOfMonth();
+                LocalDate finAcuerdo = cambioDTO.getFechaFin() != null
+                        ? cambioDTO.getFechaFin()
+                        : calcularFechaFin(inicioAcuerdo, 1, diaPago);
+
+                // Valor mensual de la última finalizada si existe
+                BigDecimal valorMensual = finalizadas.isEmpty() ? null : finalizadas.get(0).getValorMensual();
+
+                // Desactivar la membresía activa actual (sin cancelarla — queda en historial)
+                desactivarActual(idEstudiante);
+
+                MembresiaCore acuerdo = new MembresiaCore();
+                acuerdo.setEstudiante(estudiante);
+                acuerdo.setPagoOrigen(null);
+                acuerdo.setTipoMembresia(TipoMembresia.ACUERDO_PAGO);
+                acuerdo.setEstadoMembresia(EstadoMembresia.PENDIENTE_PAGO);
+                acuerdo.setFechaInicio(inicioAcuerdo);
+                acuerdo.setFechaFin(finAcuerdo);
+                acuerdo.setValorMensual(valorMensual);
+                acuerdo.setObservacion(cambioDTO.getObservacion());
+                acuerdo.setFechaLimiteCompromiso(cambioDTO.getFechaLimiteCompromiso());
+                acuerdo.setOrigenAcuerdo(origen);
+                acuerdo.setEsActiva(true);
+                acuerdo.setFechaCreacion(ahora());
+                acuerdo.setFechaUltimoCambio(ahora());
+                membresiaCoreRepository.save(acuerdo);
+
             } catch (Exception e) {
-                // No romper el flujo principal si falla la creación del core
                 System.err.println("[MembresiaCoreService] Error creando ACUERDO_PAGO para estudiante "
                         + idEstudiante + ": " + e.getMessage());
             }
@@ -594,34 +638,12 @@ public class MembresiaCoreService {
                     continue;
                 }
 
-                // Marcar membresía vencida como FINALIZADA
+                // PAGADA vencida → FINALIZADA, queda activa (muestra última fecha pagada)
                 mc.setEstadoMembresia(EstadoMembresia.FINALIZADA);
-                mc.setEsActiva(false);
+                mc.setEsActiva(true);
                 mc.setMotivoCambio("VENCIDA_SIN_PAGO_SIGUIENTE");
                 mc.setFechaUltimoCambio(ahora());
                 membresiaCoreRepository.save(mc);
-
-                // Crear membresía MORA
-                Integer rawDiaPago = estudiante.getDiaPago();
-                int diaPago = rawDiaPago != null ? rawDiaPago : mc.getFechaFin().getDayOfMonth();
-                LocalDate inicioMora = mc.getFechaFin();
-                LocalDate finMora = calcularFechaFin(inicioMora, 1, diaPago);
-                LocalDate limiteGracia = inicioMora.plusDays(15);
-
-                MembresiaCore mora = new MembresiaCore();
-                mora.setEstudiante(estudiante);
-                mora.setEquipo(mc.getEquipo());
-                mora.setPlan(mc.getPlan());
-                mora.setTipoMembresia(TipoMembresia.MORA);
-                mora.setEstadoMembresia(EstadoMembresia.EN_MORA);
-                mora.setFechaInicio(inicioMora);
-                mora.setFechaFin(finMora);
-                mora.setFechaLimiteGracia(limiteGracia);
-                mora.setPagoOrigen(null);
-                mora.setEsActiva(true);
-                mora.setFechaCreacion(ahora());
-                mora.setFechaUltimoCambio(ahora());
-                membresiaCoreRepository.save(mora);
 
                 estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
                 estudianteRepository.save(estudiante);
@@ -636,7 +658,7 @@ public class MembresiaCoreService {
         resultado.put("job", "DetectarVencimientos");
         resultado.put("fecha", hoy.toString());
         resultado.put("evaluadas", vencidas.size());
-        resultado.put("morasCreadas", procesadas);
+        resultado.put("finalizadasActivas", procesadas);
         resultado.put("omitidas", omitidas);
         resultado.put("errores", errores);
         return resultado;
@@ -684,48 +706,33 @@ public class MembresiaCoreService {
         List<MembresiaCore> acuerdosVencidos = membresiaCoreRepository.findAcuerdosVencidos(hoy);
 
         int canceladas = 0;
-        int morasCreadas = 0;
         int errores = 0;
 
         for (MembresiaCore mc : acuerdosVencidos) {
             try {
-                mc.setEstadoMembresia(EstadoMembresia.CANCELADA);
+                // Marcar acuerdo como COMPROMISO_INCUMPLIDO
+                mc.setEstadoMembresia(EstadoMembresia.COMPROMISO_INCUMPLIDO);
                 mc.setEsActiva(false);
-                mc.setMotivoCambio("ACUERDO_VENCIDO");
+                mc.setMotivoCambio("ACUERDO_VENCIDO_SIN_PAGO");
                 mc.setFechaUltimoCambio(ahora());
                 membresiaCoreRepository.save(mc);
 
                 Estudiante estudiante = mc.getEstudiante();
 
-                if (mc.getOrigenAcuerdo() == OrigenAcuerdo.DESDE_PENDIENTE) {
-                    // Nunca tuvo acceso — inactivar, estadoPago queda como EN_MORA (no SIN_MEMBRESIA)
-                    estudiante.setEstado(false);
-                    estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
-                } else {
-                    // DESDE_MORA — tuvo acceso, darle 15 días de gracia nueva
-                    Integer rawDiaPago = estudiante.getDiaPago();
-                    int diaPago = rawDiaPago != null ? rawDiaPago : hoy.getDayOfMonth();
-                    LocalDate finMora = calcularFechaFin(hoy, 1, diaPago);
-
-                    MembresiaCore mora = new MembresiaCore();
-                    mora.setEstudiante(estudiante);
-                    mora.setEquipo(mc.getEquipo());
-                    mora.setPlan(mc.getPlan());
-                    mora.setTipoMembresia(TipoMembresia.MORA);
-                    mora.setEstadoMembresia(EstadoMembresia.EN_MORA);
-                    mora.setFechaInicio(hoy);
-                    mora.setFechaFin(finMora);
-                    mora.setFechaLimiteGracia(hoy.plusDays(15));
-                    mora.setPagoOrigen(null);
-                    mora.setEsActiva(true);
-                    mora.setFechaCreacion(ahora());
-                    mora.setFechaUltimoCambio(ahora());
-                    membresiaCoreRepository.save(mora);
-
-                    estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
-                    morasCreadas++;
+                // Restaurar la última FINALIZADA como activa
+                List<MembresiaCore> finalizadas = membresiaCoreRepository
+                        .findFinalizadasDeEstudiante(estudiante.getIdEstudiante());
+                if (!finalizadas.isEmpty()) {
+                    MembresiaCore ultima = finalizadas.get(0);
+                    ultima.setEsActiva(true);
+                    ultima.setFechaUltimoCambio(ahora());
+                    membresiaCoreRepository.save(ultima);
                 }
 
+                if (mc.getOrigenAcuerdo() == OrigenAcuerdo.DESDE_PENDIENTE) {
+                    estudiante.setEstado(false);
+                }
+                estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
                 estudianteRepository.save(estudiante);
                 canceladas++;
             } catch (Exception e) {
@@ -737,7 +744,6 @@ public class MembresiaCoreService {
         resultado.put("job", "CancelarAcuerdosVencidos");
         resultado.put("fecha", hoy.toString());
         resultado.put("canceladas", canceladas);
-        resultado.put("morasCreadas", morasCreadas);
         resultado.put("errores", errores);
         return resultado;
     }
@@ -747,98 +753,77 @@ public class MembresiaCoreService {
     @Transactional
     public Map<String, Object> migrarMembresiasExistentes() {
         LocalDate hoy = hoy();
-        LocalDate limiteHistorial = hoy.minusMonths(3);
-
-        List<Membresia> todas = membresiaRepository.findAll();
+        List<Estudiante> todos = estudianteRepository.findAll();
 
         int migradas = 0;
-        int morasCreadas = 0;
         int omitidas = 0;
         int errores = 0;
 
-        // Por estudiante: fechaInicio más reciente y estado final a aplicar
-        Map<Integer, LocalDate> ultimaFechaInicioPorEstudiante = new HashMap<>();
-        // EN_MORA tiene prioridad sobre AL_DIA
-        Map<Integer, Estudiante.EstadoPago> estadoFinalPorEstudiante = new HashMap<>();
-        // El id de la membresiaCore que debe quedar como esActiva por estudiante
-        Map<Integer, Integer> activaIdPorEstudiante = new HashMap<>();
-
-        for (Membresia m : todas) {
+        for (Estudiante est : todos) {
             try {
-                // Solo migrar si tiene pago real y fechaFin válida dentro del rango
-                if (m.getEstudiante() == null || m.getPagoOrigen() == null) {
-                    omitidas++;
-                    continue;
+                Integer idEst = est.getIdEstudiante();
+
+                // Pagos PAGADOS ordenados ASC
+                List<Pago> pagos = pagoRepository.findPagadosByEstudianteOrderByFechaAsc(idEst);
+
+                // Calcular total de meses cubiertos y encontrar el pago más antiguo válido
+                int totalMeses = 0;
+                Pago pagoMasViejo = null;
+                BigDecimal totalPagado = BigDecimal.ZERO;
+
+                for (Pago p : pagos) {
+                    int m = calcularMesesDesdeValorPago(p.getValor(), p.getMetodoPago());
+                    if (m > 0) {
+                        totalMeses += m;
+                        if (pagoMasViejo == null) pagoMasViejo = p;
+                        if (p.getValor() != null) totalPagado = totalPagado.add(p.getValor());
+                    }
                 }
-                LocalDate fechaFin = m.getFechaFin();
-                if (fechaFin == null || fechaFin.isBefore(limiteHistorial)) {
+
+                if (pagoMasViejo == null || totalMeses == 0) {
                     omitidas++;
                     continue;
                 }
 
-                Integer idEstudiante = m.getEstudiante().getIdEstudiante();
-                int diaPago = fechaFin.getDayOfMonth();
+                // fechaInicio: día (diaPago o 3) del mes del pago más antiguo
+                LocalDate fechaPagoViejo = pagoMasViejo.getFechaPago() != null
+                        ? pagoMasViejo.getFechaPago() : hoy;
+                int dia = (est.getDiaPago() != null && est.getDiaPago() > 0) ? est.getDiaPago() : 3;
+                YearMonth ym = YearMonth.from(fechaPagoViejo);
+                dia = Math.min(dia, ym.lengthOfMonth());
+                LocalDate fechaInicio = fechaPagoViejo.withDayOfMonth(dia);
 
+                // fechaFin: fechaInicio + totalMeses
+                LocalDate fechaFin = calcularFechaFin(fechaInicio, totalMeses, dia);
+
+                // valorMensual promedio
+                BigDecimal valorMensual = totalMeses > 0
+                        ? totalPagado.divide(new BigDecimal(totalMeses), 2, java.math.RoundingMode.HALF_UP)
+                        : null;
+
+                // Estado: PAGADA si vigente, FINALIZADA si vencida (siempre esActiva=true — sin MORA)
                 boolean vencida = fechaFin.isBefore(hoy);
-                long diasVencida = vencida ? ChronoUnit.DAYS.between(fechaFin, hoy) : 0;
-
-                // Crear registro PAGADA o FINALIZADA
-                EstadoMembresia estadoPrincipal = vencida ? EstadoMembresia.FINALIZADA : EstadoMembresia.PAGADA;
+                EstadoMembresia estado = vencida ? EstadoMembresia.FINALIZADA : EstadoMembresia.PAGADA;
 
                 MembresiaCore mc = new MembresiaCore();
-                mc.setEstudiante(m.getEstudiante());
-                mc.setEquipo(m.getEquipo());
-                mc.setPlan(m.getPlan());
-                mc.setPagoOrigen(m.getPagoOrigen());
+                mc.setEstudiante(est);
+                mc.setPagoOrigen(pagoMasViejo);
                 mc.setTipoMembresia(TipoMembresia.EFECTIVO);
-                mc.setEstadoMembresia(estadoPrincipal);
-                mc.setFechaInicio(m.getFechaInicio());
+                mc.setEstadoMembresia(estado);
+                mc.setFechaInicio(fechaInicio);
                 mc.setFechaFin(fechaFin);
-                mc.setValorMensual(m.getValorMensual());
-                mc.setEsActiva(false); // se corrige al final por estudiante
-                mc.setFechaCreacion(m.getFechaCreacion() != null ? m.getFechaCreacion() : ahora());
+                mc.setValorMensual(valorMensual);
+                mc.setEsActiva(true);
+                mc.setFechaCreacion(ahora());
                 mc.setFechaUltimoCambio(ahora());
-                mc.setMotivoCambio("MIGRADO_DESDE_MEMBRESIA");
-                MembresiaCore mcGuardado = membresiaCoreRepository.save(mc);
+                mc.setMotivoCambio("MIGRADO_DESDE_PAGOS");
+                membresiaCoreRepository.save(mc);
                 migradas++;
 
-                if (!vencida) {
-                    // PAGADA vigente → esta es la activa
-                    activaIdPorEstudiante.put(idEstudiante, mcGuardado.getIdMembresiaCore());
-                    estadoFinalPorEstudiante.put(idEstudiante, Estudiante.EstadoPago.AL_DIA);
-                } else if (diasVencida <= 15) {
-                    // Venció hace ≤ 15 días → crear MORA, esa es la activa
-                    LocalDate inicioMora = fechaFin; // mismo día del vencimiento
-                    LocalDate finMora = calcularFechaFin(inicioMora, 1, diaPago);
-
-                    MembresiaCore mora = new MembresiaCore();
-                    mora.setEstudiante(m.getEstudiante());
-                    mora.setEquipo(m.getEquipo());
-                    mora.setPlan(m.getPlan());
-                    mora.setPagoOrigen(null);
-                    mora.setTipoMembresia(TipoMembresia.MORA);
-                    mora.setEstadoMembresia(EstadoMembresia.EN_MORA);
-                    mora.setFechaInicio(inicioMora);
-                    mora.setFechaFin(finMora);
-                    mora.setFechaLimiteGracia(inicioMora.plusDays(15));
-                    mora.setValorMensual(m.getValorMensual());
-                    mora.setEsActiva(false); // se corrige al final
-                    mora.setFechaCreacion(ahora());
-                    mora.setFechaUltimoCambio(ahora());
-                    mora.setMotivoCambio("MORA_GENERADA_EN_MIGRACION");
-                    MembresiaCore moraGuardada = membresiaCoreRepository.save(mora);
-                    morasCreadas++;
-
-                    activaIdPorEstudiante.put(idEstudiante, moraGuardada.getIdMembresiaCore());
-                    estadoFinalPorEstudiante.put(idEstudiante, Estudiante.EstadoPago.EN_MORA);
-                }
-                // diasVencida > 15: solo FINALIZADA, no hay activa por esta membresía
-                // (si el estudiante no tiene otra más reciente quedará SIN_MEMBRESIA)
-
-                // Rastrear fechaInicio más reciente para diaPago
-                LocalDate fi = m.getFechaInicio();
-                if (fi != null) {
-                    ultimaFechaInicioPorEstudiante.merge(idEstudiante, fi, (a, b) -> b.isAfter(a) ? b : a);
+                // Actualizar fechaRegistro si es null
+                if (est.getFechaRegistro() == null) {
+                    est.setFechaRegistro(fechaInicio);
+                    estudianteRepository.save(est);
                 }
 
             } catch (Exception e) {
@@ -846,47 +831,11 @@ public class MembresiaCoreService {
             }
         }
 
-        // Marcar esActiva=true en la membresía elegida por cada estudiante
-        for (Map.Entry<Integer, Integer> entry : activaIdPorEstudiante.entrySet()) {
-            try {
-                membresiaCoreRepository.findById(entry.getValue()).ifPresent(mc -> {
-                    mc.setEsActiva(true);
-                    membresiaCoreRepository.save(mc);
-                });
-            } catch (Exception ignored) {}
-        }
-
-        // Setear diaPago y estadoPago en cada estudiante migrado
-        for (Integer idEst : ultimaFechaInicioPorEstudiante.keySet()) {
-            try {
-                estudianteRepository.findById(idEst).ifPresent(est -> {
-                    est.setDiaPago(ultimaFechaInicioPorEstudiante.get(idEst).getDayOfMonth());
-                    Estudiante.EstadoPago nuevoEstado = estadoFinalPorEstudiante.get(idEst);
-                    if (nuevoEstado != null) est.setEstadoPago(nuevoEstado);
-                    estudianteRepository.save(est);
-                });
-            } catch (Exception ignored) {}
-        }
-
-        // Estudiantes sin membresía migrada → SIN_MEMBRESIA
-        Set<Integer> idsMigrados = ultimaFechaInicioPorEstudiante.keySet();
-        List<Estudiante> activos = estudianteRepository.findByEstado(true);
-        int sinMembresia = 0;
-        for (Estudiante est : activos) {
-            if (!idsMigrados.contains(est.getIdEstudiante())) {
-                est.setEstadoPago(Estudiante.EstadoPago.SIN_MEMBRESIA);
-                estudianteRepository.save(est);
-                sinMembresia++;
-            }
-        }
-
         Map<String, Object> resultado = new LinkedHashMap<>();
         resultado.put("job", "Migracion");
         resultado.put("fecha", hoy.toString());
         resultado.put("membresiasMigradas", migradas);
-        resultado.put("morasCreadas", morasCreadas);
         resultado.put("membresiasOmitidas", omitidas);
-        resultado.put("estudiantesSinMembresia", sinMembresia);
         resultado.put("errores", errores);
         return resultado;
     }

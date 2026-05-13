@@ -33,6 +33,11 @@ public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecifi
     // Obtener el último pago de un estudiante
     @Query("SELECT p FROM Pago p WHERE p.estudiante.idEstudiante = :idEstudiante ORDER BY p.fechaPago DESC")
     List<Pago> findUltimoPagoByEstudiante(@Param("idEstudiante") Integer idEstudiante);
+
+    // Pagos PAGADOS de un estudiante ordenados por fecha ASC (para migración)
+    @Query("SELECT p FROM Pago p WHERE p.estudiante.idEstudiante = :idEstudiante " +
+           "AND p.estadoPago = 'PAGADO' ORDER BY p.fechaPago ASC, p.idPago ASC")
+    List<Pago> findPagadosByEstudianteOrderByFechaAsc(@Param("idEstudiante") Integer idEstudiante);
     
     // Obtener pagos del mes actual
     @Query("SELECT p FROM Pago p WHERE p.estudiante.idEstudiante = :idEstudiante AND p.mesPagado = :mesActual")
