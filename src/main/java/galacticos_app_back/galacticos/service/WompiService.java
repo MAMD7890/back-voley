@@ -1468,18 +1468,27 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                             pago.setFechaPago(fechaColombia.toLocalDate());
                             pago.setHoraPago(fechaColombia.toLocalTime());
                             pago.setWompiTransactionId(transactionId);
-                            pago.setReferenciaPago(wompiReference); // Actualizar con la referencia real
-                            
-                            // Actualizar estado de pago del estudiante a AL_DIA
-                            if (pago.getEstudiante() != null) {
-                                Estudiante estudiante = pago.getEstudiante();
+                            pago.setReferenciaPago(wompiReference);
+                            Pago pagoAprobado = pagoRepository.save(pago);
+
+                            if (pagoAprobado.getEstudiante() != null) {
+                                Estudiante estudiante = pagoAprobado.getEstudiante();
                                 estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                                 estudianteRepository.save(estudiante);
                                 activarMembresiaEstudiante(estudiante);
-                                log.info("✅ Estado de pago del estudiante {} actualizado a AL_DIA y membresía activada", 
-                                    estudiante.getIdEstudiante());
+                                if (usarMembresiaCore) {
+                                    try {
+                                        membresiaCoreService.crearMembresiaParaPago(
+                                                estudiante, pagoAprobado, MembresiaCore.TipoMembresia.ONLINE);
+                                    } catch (Exception ex) {
+                                        log.warn("MembresiaCore no actualizada para pago webhook {}: {}",
+                                                pagoAprobado.getIdPago(), ex.getMessage());
+                                    }
+                                }
+                                log.info("✅ Estudiante {} actualizado a AL_DIA y membresía core activada",
+                                        estudiante.getIdEstudiante());
                             }
-                            
+
                             log.info("✅ Pago APROBADO - ID: {}, Referencia: {}", transactionId, wompiReference);
                             break;
                             

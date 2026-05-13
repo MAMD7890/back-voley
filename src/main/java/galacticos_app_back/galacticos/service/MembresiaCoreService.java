@@ -1095,6 +1095,45 @@ public class MembresiaCoreService {
         }
     }
 
+    // ─── Job: recuperar membresías faltantes por bug de webhook ─────────────
+
+    @Transactional
+    public Map<String, Object> ejecutarJobRecuperarMembresiasFaltantes() {
+        List<Pago> huerfanos = pagoRepository.findPagadosOnlineSinMembresia();
+
+        // Un pago por estudiante: el más reciente (la query ya viene DESC)
+        Map<Integer, Pago> porEstudiante = new LinkedHashMap<>();
+        for (Pago p : huerfanos) {
+            porEstudiante.putIfAbsent(p.getEstudiante().getIdEstudiante(), p);
+        }
+
+        int creadas  = 0;
+        int omitidas = 0;
+        int errores  = 0;
+
+        for (Pago pago : porEstudiante.values()) {
+            try {
+                crearMembresiaParaPago(pago.getEstudiante(), pago, TipoMembresia.ONLINE);
+                creadas++;
+            } catch (IllegalStateException e) {
+                // pagoOrigen ya vinculado — condición de carrera o duplicado
+                omitidas++;
+            } catch (Exception e) {
+                errores++;
+            }
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("job", "RecuperarMembresiasFaltantes");
+        resultado.put("fecha", hoy().toString());
+        resultado.put("pagosHuerfanos", huerfanos.size());
+        resultado.put("estudiantesEvaluados", porEstudiante.size());
+        resultado.put("creadas", creadas);
+        resultado.put("omitidas", omitidas);
+        resultado.put("errores", errores);
+        return resultado;
+    }
+
     // ─── Migrar acuerdos de pago faltantes (suplemento a migración inicial) ──
 
     @Transactional

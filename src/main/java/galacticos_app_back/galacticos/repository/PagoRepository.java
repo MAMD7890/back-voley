@@ -116,4 +116,12 @@ public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecifi
 
     // Todos los pagos de una referencia, del más antiguo al más reciente
     List<Pago> findByReferenciaPagoOrderByIdPagoAsc(String referenciaPago);
+
+    // Pagos ONLINE PAGADOS sin membresía asociada (huérfanos por bug de webhook)
+    @Query("SELECT p FROM Pago p " +
+           "WHERE p.estadoPago = 'PAGADO' " +
+           "AND p.metodoPago = 'ONLINE' " +
+           "AND NOT EXISTS (SELECT m FROM MembresiaCore m WHERE m.pagoOrigen = p) " +
+           "ORDER BY p.fechaPago DESC, p.idPago DESC")
+    List<Pago> findPagadosOnlineSinMembresia();
 }
