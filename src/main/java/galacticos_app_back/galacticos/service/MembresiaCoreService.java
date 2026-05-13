@@ -1055,6 +1055,90 @@ public class MembresiaCoreService {
         }
     }
 
+    // ─── Migrar acuerdos de pago faltantes (suplemento a migración inicial) ──
+
+    @Transactional
+    public Map<String, Object> migrarAcuerdosPendientes() {
+        LocalDate hoy = hoy();
+        List<Estudiante> compromisos = estudianteRepository
+                .findByEstadoPago(Estudiante.EstadoPago.COMPROMISO_PAGO);
+
+        int creados  = 0;
+        int omitidos = 0;
+        int errores  = 0;
+
+        for (Estudiante est : compromisos) {
+            try {
+                // Si ya tiene un ACUERDO_PAGO activo no crear otro
+                Optional<MembresiaCore> acuerdoExistente =
+                        membresiaCoreRepository.findFirstByEstudianteIdEstudianteAndTipoMembresiaAndEstadoMembresia(
+                                est.getIdEstudiante(), TipoMembresia.ACUERDO_PAGO, EstadoMembresia.PENDIENTE_PAGO);
+                if (acuerdoExistente.isPresent()) {
+                    omitidos++;
+                    continue;
+                }
+
+                Optional<MembresiaCore> activaOpt =
+                        membresiaCoreRepository.findByEstudianteIdEstudianteAndEsActivaTrue(
+                                est.getIdEstudiante());
+
+                LocalDate inicioAcuerdo;
+                BigDecimal valorMensual = null;
+                OrigenAcuerdo origen;
+                int diaAcuerdo = est.getDiaPago() != null ? est.getDiaPago() : hoy.getDayOfMonth();
+
+                if (activaOpt.isPresent()) {
+                    MembresiaCore activa = activaOpt.get();
+                    inicioAcuerdo = activa.getFechaFin() != null ? activa.getFechaFin() : hoy;
+                    valorMensual  = activa.getValorMensual();
+                    origen        = OrigenAcuerdo.DESDE_MORA;
+                    activa.setEsActiva(false);
+                    activa.setFechaUltimoCambio(ahora());
+                    membresiaCoreRepository.save(activa);
+                } else {
+                    inicioAcuerdo = est.getFechaRegistro() != null ? est.getFechaRegistro() : hoy;
+                    origen        = OrigenAcuerdo.DESDE_PENDIENTE;
+                }
+
+                LocalDate finAcuerdo = calcularFechaFin(inicioAcuerdo, 1, diaAcuerdo);
+                membresiaCoreRepository.save(
+                        buildAcuerdoMigracion(est, inicioAcuerdo, finAcuerdo, valorMensual, origen));
+                creados++;
+
+            } catch (Exception e) {
+                errores++;
+            }
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("job", "MigrarAcuerdosPendientes");
+        resultado.put("fecha", hoy.toString());
+        resultado.put("creados", creados);
+        resultado.put("omitidos", omitidos);
+        resultado.put("errores", errores);
+        return resultado;
+    }
+
+    private MembresiaCore buildAcuerdoMigracion(Estudiante est, LocalDate inicio, LocalDate fin,
+                                                  BigDecimal valorMensual, OrigenAcuerdo origen) {
+        MembresiaCore acuerdo = new MembresiaCore();
+        acuerdo.setEstudiante(est);
+        acuerdo.setPagoOrigen(null);
+        acuerdo.setTipoMembresia(TipoMembresia.ACUERDO_PAGO);
+        acuerdo.setEstadoMembresia(EstadoMembresia.PENDIENTE_PAGO);
+        acuerdo.setFechaInicio(inicio);
+        acuerdo.setFechaFin(fin);
+        acuerdo.setValorMensual(valorMensual);
+        acuerdo.setObservacion(est.getObservacionPago());
+        acuerdo.setFechaLimiteCompromiso(est.getFechaLimiteCompromiso());
+        acuerdo.setOrigenAcuerdo(origen);
+        acuerdo.setEsActiva(true);
+        acuerdo.setFechaCreacion(ahora());
+        acuerdo.setFechaUltimoCambio(ahora());
+        acuerdo.setMotivoCambio("MIGRADO_ACUERDO_PAGO");
+        return acuerdo;
+    }
+
     // ─── Migración ────────────────────────────────────────────────────────────
 
     @Transactional
@@ -1089,7 +1173,18 @@ public class MembresiaCoreService {
                 }
 
                 if (pagoMasViejo == null || totalMeses == 0) {
-                    omitidas++;
+                    // Sin pagos pero con compromiso: crear ACUERDO_PAGO desde cero
+                    if (est.getEstadoPago() == Estudiante.EstadoPago.COMPROMISO_PAGO) {
+                        LocalDate inicio = est.getFechaRegistro() != null ? est.getFechaRegistro() : hoy;
+                        int d = (est.getDiaPago() != null && est.getDiaPago() > 0)
+                                ? est.getDiaPago() : inicio.getDayOfMonth();
+                        LocalDate fin = calcularFechaFin(inicio, 1, d);
+                        membresiaCoreRepository.save(
+                                buildAcuerdoMigracion(est, inicio, fin, null, OrigenAcuerdo.DESDE_PENDIENTE));
+                        migradas++;
+                    } else {
+                        omitidas++;
+                    }
                     continue;
                 }
 
@@ -1127,6 +1222,19 @@ public class MembresiaCoreService {
                 mc.setMotivoCambio("MIGRADO_DESDE_PAGOS");
                 membresiaCoreRepository.save(mc);
                 migradas++;
+
+                // Si tiene compromiso de pago: la membresía migrada queda inactiva
+                // y se crea el ACUERDO_PAGO vigente encima
+                if (est.getEstadoPago() == Estudiante.EstadoPago.COMPROMISO_PAGO) {
+                    mc.setEsActiva(false);
+                    mc.setFechaUltimoCambio(ahora());
+                    membresiaCoreRepository.save(mc);
+                    LocalDate inicioAcuerdo = fechaFin;
+                    LocalDate finAcuerdo    = calcularFechaFin(inicioAcuerdo, 1, dia);
+                    membresiaCoreRepository.save(
+                            buildAcuerdoMigracion(est, inicioAcuerdo, finAcuerdo,
+                                    valorMensual, OrigenAcuerdo.DESDE_MORA));
+                }
 
                 // Actualizar fechaRegistro si es null
                 if (est.getFechaRegistro() == null) {
