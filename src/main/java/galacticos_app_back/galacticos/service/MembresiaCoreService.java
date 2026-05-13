@@ -19,7 +19,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 @Service
@@ -87,6 +86,18 @@ public class MembresiaCoreService {
 
     private LocalDateTime ahora() {
         return LocalDateTime.now(BOGOTA);
+    }
+
+    // Elimina pagos duplicados por referenciaPago, conservando el de menor idPago
+    private List<Pago> deduplicarPagos(List<Pago> pagos) {
+        Map<String, Pago> unicos = new LinkedHashMap<>();
+        for (Pago p : pagos) {
+            String key = (p.getReferenciaPago() != null && !p.getReferenciaPago().isBlank())
+                    ? p.getReferenciaPago()
+                    : "_id_" + p.getIdPago();
+            unicos.putIfAbsent(key, p);
+        }
+        return new ArrayList<>(unicos.values());
     }
 
     // Quita el flag esActiva de la membresía que lo tenga actualmente
@@ -877,11 +888,13 @@ public class MembresiaCoreService {
 
     @Transactional
     public Map<String, Object> ejecutarJobSincronizarEstados() {
+
+        // ── 1. Sincronizar estadoPago del estudiante con su membresía activa ──
         List<MembresiaCore> activas = membresiaCoreRepository.findAllByEsActivaTrue();
 
-        int actualizados = 0;
-        int sinCambio    = 0;
-        int errores      = 0;
+        int estadosActualizados = 0;
+        int estadosSinCambio    = 0;
+        int estadosErrores      = 0;
 
         for (MembresiaCore mc : activas) {
             try {
@@ -890,22 +903,45 @@ public class MembresiaCoreService {
                 if (est.getEstadoPago() != esperado) {
                     est.setEstadoPago(esperado);
                     estudianteRepository.save(est);
-                    actualizados++;
+                    estadosActualizados++;
                 } else {
-                    sinCambio++;
+                    estadosSinCambio++;
                 }
             } catch (Exception e) {
-                errores++;
+                estadosErrores++;
+            }
+        }
+
+        // ── 2. Corregir tipoMembresia mal asignado durante migración ──────────
+        List<MembresiaCore> conTipoIncorrecto = membresiaCoreRepository.findConTipoIncorrecto();
+
+        int tiposCorregidos = 0;
+        int tiposErrores    = 0;
+
+        for (MembresiaCore mc : conTipoIncorrecto) {
+            try {
+                Pago.MetodoPago metodoPago = mc.getPagoOrigen().getMetodoPago();
+                TipoMembresia tipoCorrector = metodoPago == Pago.MetodoPago.ONLINE
+                        ? TipoMembresia.ONLINE
+                        : TipoMembresia.EFECTIVO;
+                mc.setTipoMembresia(tipoCorrector);
+                mc.setFechaUltimoCambio(ahora());
+                membresiaCoreRepository.save(mc);
+                tiposCorregidos++;
+            } catch (Exception e) {
+                tiposErrores++;
             }
         }
 
         Map<String, Object> resultado = new LinkedHashMap<>();
         resultado.put("job", "SincronizarEstados");
         resultado.put("fecha", hoy().toString());
-        resultado.put("evaluados", activas.size());
-        resultado.put("actualizados", actualizados);
-        resultado.put("sinCambio", sinCambio);
-        resultado.put("errores", errores);
+        resultado.put("estadosEvaluados", activas.size());
+        resultado.put("estadosActualizados", estadosActualizados);
+        resultado.put("estadosSinCambio", estadosSinCambio);
+        resultado.put("estadosErrores", estadosErrores);
+        resultado.put("tiposCorregidos", tiposCorregidos);
+        resultado.put("tiposErrores", tiposErrores);
         return resultado;
     }
 
@@ -918,6 +954,105 @@ public class MembresiaCoreService {
             case EN_MORA, FINALIZADA, COMPROMISO_INCUMPLIDO, CANCELADA ->
                     Estudiante.EstadoPago.EN_MORA;
         };
+    }
+
+    // ─── Corrección de pagos duplicados ──────────────────────────────────────
+
+    @Transactional
+    public Map<String, Object> corregirPagosDuplicados() {
+        List<String> refsDuplicadas = pagoRepository.findReferenciasConDuplicados();
+
+        int pagosEliminados      = 0;
+        int membresiasCorregidas = 0;
+        int errores              = 0;
+
+        for (String ref : refsDuplicadas) {
+            try {
+                List<Pago> grupo = pagoRepository.findByReferenciaPagoOrderByIdPagoAsc(ref);
+                if (grupo.size() < 2) continue;
+
+                Pago canonical = grupo.get(0); // el más antiguo es el canónico
+                List<Pago> duplicados = grupo.subList(1, grupo.size());
+
+                for (Pago dup : duplicados) {
+                    // Redirigir membresias_core que apunten al duplicado al canónico
+                    List<MembresiaCore> afectadas = membresiaCoreRepository
+                            .findByPagoOrigenIdPago(dup.getIdPago());
+                    for (MembresiaCore mc : afectadas) {
+                        mc.setPagoOrigen(canonical);
+                        mc.setFechaUltimoCambio(ahora());
+                        membresiaCoreRepository.save(mc);
+                    }
+                    pagoRepository.delete(dup);
+                    pagosEliminados++;
+                }
+
+                // Recalcular la membresía migrada del estudiante afectado
+                if (canonical.getEstudiante() != null) {
+                    recalcularMembresiasMigradas(canonical.getEstudiante().getIdEstudiante());
+                    membresiasCorregidas++;
+                }
+
+            } catch (Exception e) {
+                errores++;
+            }
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("job", "CorregirPagosDuplicados");
+        resultado.put("fecha", hoy().toString());
+        resultado.put("referenciasConDuplicados", refsDuplicadas.size());
+        resultado.put("pagosEliminados", pagosEliminados);
+        resultado.put("membresiasCorregidas", membresiasCorregidas);
+        resultado.put("errores", errores);
+        return resultado;
+    }
+
+    private void recalcularMembresiasMigradas(Integer idEstudiante) {
+        List<MembresiaCore> migradas = membresiaCoreRepository
+                .findByEstudianteIdEstudianteAndMotivoCambio(idEstudiante, "MIGRADO_DESDE_PAGOS");
+        if (migradas.isEmpty()) return;
+
+        MembresiaCore mc = migradas.get(0);
+        LocalDate fechaInicio = mc.getFechaInicio();
+        if (fechaInicio == null) return;
+
+        List<Pago> pagosRaw = pagoRepository.findPagadosByEstudianteOrderByFechaAsc(idEstudiante);
+        List<Pago> pagos    = deduplicarPagos(pagosRaw);
+
+        int totalMeses = 0;
+        BigDecimal totalPagado = BigDecimal.ZERO;
+        for (Pago p : pagos) {
+            int m = calcularMesesDesdeValorPago(p.getValor(), p.getMetodoPago());
+            if (m > 0) {
+                totalMeses += m;
+                if (p.getValor() != null) totalPagado = totalPagado.add(p.getValor());
+            }
+        }
+        if (totalMeses == 0) return;
+
+        int dia = fechaInicio.getDayOfMonth();
+        LocalDate nuevaFechaFin = calcularFechaFin(fechaInicio, totalMeses, dia);
+        BigDecimal valorMensual = totalPagado.divide(
+                new BigDecimal(totalMeses), 2, java.math.RoundingMode.HALF_UP);
+        LocalDate hoy = hoy();
+        EstadoMembresia nuevoEstado = nuevaFechaFin.isBefore(hoy)
+                ? EstadoMembresia.FINALIZADA : EstadoMembresia.PAGADA;
+
+        mc.setFechaFin(nuevaFechaFin);
+        mc.setValorMensual(valorMensual);
+        mc.setEstadoMembresia(nuevoEstado);
+        mc.setMotivoCambio("MIGRADO_CORREGIDO");
+        mc.setFechaUltimoCambio(ahora());
+        membresiaCoreRepository.save(mc);
+
+        if (Boolean.TRUE.equals(mc.getEsActiva())) {
+            Estudiante est = mc.getEstudiante();
+            est.setEstadoPago(nuevoEstado == EstadoMembresia.PAGADA
+                    ? Estudiante.EstadoPago.AL_DIA
+                    : Estudiante.EstadoPago.EN_MORA);
+            estudianteRepository.save(est);
+        }
     }
 
     // ─── Migración ────────────────────────────────────────────────────────────
@@ -935,8 +1070,9 @@ public class MembresiaCoreService {
             try {
                 Integer idEst = est.getIdEstudiante();
 
-                // Pagos PAGADOS ordenados ASC
-                List<Pago> pagos = pagoRepository.findPagadosByEstudianteOrderByFechaAsc(idEst);
+                // Pagos PAGADOS ordenados ASC, deduplicados por referenciaPago
+                List<Pago> pagosRaw = pagoRepository.findPagadosByEstudianteOrderByFechaAsc(idEst);
+                List<Pago> pagos = deduplicarPagos(pagosRaw);
 
                 // Calcular total de meses cubiertos y encontrar el pago más antiguo válido
                 int totalMeses = 0;

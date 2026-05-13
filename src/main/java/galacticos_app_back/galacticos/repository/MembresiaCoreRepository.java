@@ -113,4 +113,18 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
 
     // Sincronizar estados: todas las membresías marcadas como activas
     List<MembresiaCore> findAllByEsActivaTrue();
+
+    // Corrección duplicados: membresías que apuntan a un pago específico
+    List<MembresiaCore> findByPagoOrigenIdPago(Integer idPago);
+
+    // Membresías migradas de un estudiante (para recalcular tras limpiar duplicados)
+    List<MembresiaCore> findByEstudianteIdEstudianteAndMotivoCambio(
+            Integer idEstudiante, String motivoCambio);
+
+    // Corrección tipo: EFECTIVO con pago ONLINE o ONLINE con pago EFECTIVO
+    @Query("SELECT m FROM MembresiaCore m WHERE m.pagoOrigen IS NOT NULL " +
+           "AND m.tipoMembresia IN ('EFECTIVO', 'ONLINE') " +
+           "AND ((m.tipoMembresia = 'EFECTIVO' AND m.pagoOrigen.metodoPago = 'ONLINE') " +
+           "  OR (m.tipoMembresia = 'ONLINE'   AND m.pagoOrigen.metodoPago = 'EFECTIVO'))")
+    List<MembresiaCore> findConTipoIncorrecto();
 }

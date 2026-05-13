@@ -73,6 +73,13 @@ public class MembresiaCoreController {
         return ResponseEntity.ok(membresiaCoreService.ejecutarJobSincronizarEstados());
     }
 
+    @PostMapping("/api/internal/membresias-core/jobs/corregir-duplicados")
+    public ResponseEntity<Map<String, Object>> jobCorregirDuplicados(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.corregirPagosDuplicados());
+    }
+
     @PostMapping("/api/internal/membresias-core/migracion")
     public ResponseEntity<Map<String, Object>> migrar(
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {

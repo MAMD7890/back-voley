@@ -1336,12 +1336,30 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 return null;
             }
             
-            // Verificar si ya existe
+            // Verificar si ya existe por transactionId
             Optional<Pago> existingPago = pagoRepository.findByWompiTransactionId(transactionId);
             if (existingPago.isPresent()) {
                 return existingPago.get();
             }
-            
+
+            // Verificar si ya existe un pago PENDIENTE con la misma referencia —
+            // evita crear un segundo registro cuando el PENDIENTE aún no tiene transactionId.
+            if (reference != null) {
+                Optional<Pago> byRef = pagoRepository.findFirstByReferenciaPagoOrderByIdPagoDesc(reference);
+                if (byRef.isPresent()) {
+                    Pago existente = byRef.get();
+                    if (existente.getEstadoPago() == Pago.EstadoPago.PAGADO) {
+                        return existente;
+                    }
+                    // PENDIENTE encontrado: actualizarlo en lugar de crear uno nuevo
+                    existente.setEstadoPago(Pago.EstadoPago.PAGADO);
+                    existente.setWompiTransactionId(transactionId);
+                    existente.setFechaPago(fechaColombia.toLocalDate());
+                    existente.setHoraPago(fechaColombia.toLocalTime());
+                    return pagoRepository.save(existente);
+                }
+            }
+
             // Crear el pago
             Pago pago = new Pago();
             pago.setEstudiante(estudiante);

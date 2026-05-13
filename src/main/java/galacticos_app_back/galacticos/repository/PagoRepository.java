@@ -107,4 +107,13 @@ public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecifi
            "WHERE p.estadoPago = 'PAGADO' " +
            "AND (p.referenciaPago IS NULL OR p.referenciaPago NOT LIKE 'PAY-%')")
     List<Pago> findPagosExternos();
+
+    // Corrección de duplicados: referencias PAY- que aparecen más de una vez
+    @Query("SELECT p.referenciaPago FROM Pago p " +
+           "WHERE p.referenciaPago LIKE 'PAY-%' " +
+           "GROUP BY p.referenciaPago HAVING COUNT(p) > 1")
+    List<String> findReferenciasConDuplicados();
+
+    // Todos los pagos de una referencia, del más antiguo al más reciente
+    List<Pago> findByReferenciaPagoOrderByIdPagoAsc(String referenciaPago);
 }
