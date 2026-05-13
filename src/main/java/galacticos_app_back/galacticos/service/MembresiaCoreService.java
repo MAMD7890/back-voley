@@ -166,7 +166,8 @@ public class MembresiaCoreService {
                     base = ultimaFechaFinFinalizada(estudiante.getIdEstudiante());
                     if (base == null) base = pago.getFechaPago() != null ? pago.getFechaPago() : hoy;
                 }
-                int diaPago = estudiante.getDiaPago() != null ? estudiante.getDiaPago() : base.getDayOfMonth();
+                Integer rawDp1 = estudiante.getDiaPago();
+                int diaPago = rawDp1 != null ? rawDp1 : base.getDayOfMonth();
                 LocalDate fechaFin = calcularFechaFin(base, meses, diaPago);
                 boolean saldada = !fechaFin.isBefore(hoy);
                 EstadoMembresia estado = saldada ? EstadoMembresia.PAGADA : EstadoMembresia.FINALIZADA;
@@ -180,7 +181,8 @@ public class MembresiaCoreService {
             } else {
                 // Inactivo: arranque limpio
                 LocalDate fechaInicio = pago.getFechaPago() != null ? pago.getFechaPago() : hoy;
-                int diaPago = estudiante.getDiaPago() != null ? estudiante.getDiaPago() : fechaInicio.getDayOfMonth();
+                Integer rawDp2 = estudiante.getDiaPago();
+                int diaPago = rawDp2 != null ? rawDp2 : fechaInicio.getDayOfMonth();
                 LocalDate fechaFin = calcularFechaFin(fechaInicio, meses, diaPago);
                 membresia = buildMembresia(estudiante, pago, tipo, fechaInicio, fechaFin,
                         EstadoMembresia.PAGADA, true);
@@ -191,7 +193,8 @@ public class MembresiaCoreService {
         } else {
             // Sin membresía activa: primer pago
             LocalDate fechaInicio = pago.getFechaPago() != null ? pago.getFechaPago() : hoy;
-            int diaPago = estudiante.getDiaPago() != null ? estudiante.getDiaPago() : fechaInicio.getDayOfMonth();
+            Integer rawDp3 = estudiante.getDiaPago();
+            int diaPago = rawDp3 != null ? rawDp3 : fechaInicio.getDayOfMonth();
             LocalDate fechaFin = calcularFechaFin(fechaInicio, meses, diaPago);
             membresia = buildMembresia(estudiante, pago, tipo, fechaInicio, fechaFin,
                     EstadoMembresia.PAGADA, true);
@@ -543,7 +546,28 @@ public class MembresiaCoreService {
         // ── Activa es FINALIZADA ──────────────────────────────────────────────
         if (activa.getEstadoMembresia() == EstadoMembresia.FINALIZADA) {
             if (nuevaFechaInicio != null && nuevaFechaFin != null) {
-                // Crear nueva PENDIENTE_REGISTRO con el rango indicado
+                boolean inicioEnRango = activa.getFechaInicio() != null && activa.getFechaFin() != null
+                        && !nuevaFechaInicio.isBefore(activa.getFechaInicio())
+                        && !nuevaFechaInicio.isAfter(activa.getFechaFin());
+                boolean tienePago = activa.getPagoOrigen() != null;
+
+                if (inicioEnRango && tienePago) {
+                    // Ajustar fechas sobre la membresía existente (pago ya vinculado)
+                    activa.setFechaInicio(nuevaFechaInicio);
+                    activa.setFechaFin(nuevaFechaFin);
+                    if (nuevaFechaFin.isAfter(hoy)) {
+                        activa.setEstadoMembresia(EstadoMembresia.PAGADA);
+                        estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                    } else {
+                        estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                    }
+                    activa.setMotivoCambio("FECHAS_AJUSTADAS_MANUALMENTE");
+                    activa.setFechaUltimoCambio(ahora());
+                    estudianteRepository.save(estudiante);
+                    return MembresiaCoreDTO.from(membresiaCoreRepository.save(activa));
+                }
+
+                // Fecha inicio fuera del rango o sin pago → crear nueva PENDIENTE_REGISTRO
                 activa.setEsActiva(false);
                 activa.setFechaUltimoCambio(ahora());
                 membresiaCoreRepository.save(activa);
@@ -1101,7 +1125,8 @@ public class MembresiaCoreService {
                 LocalDate inicioAcuerdo;
                 BigDecimal valorMensual = null;
                 OrigenAcuerdo origen;
-                int diaAcuerdo = est.getDiaPago() != null ? est.getDiaPago() : hoy.getDayOfMonth();
+                Integer dpAcuerdo = est.getDiaPago();
+                int diaAcuerdo = dpAcuerdo != null ? dpAcuerdo : hoy.getDayOfMonth();
 
                 if (activaOpt.isPresent()) {
                     MembresiaCore activa = activaOpt.get();
@@ -1192,8 +1217,8 @@ public class MembresiaCoreService {
                     // Sin pagos pero con compromiso: crear ACUERDO_PAGO desde cero
                     if (est.getEstadoPago() == Estudiante.EstadoPago.COMPROMISO_PAGO) {
                         LocalDate inicio = est.getFechaRegistro() != null ? est.getFechaRegistro() : hoy;
-                        int d = (est.getDiaPago() != null && est.getDiaPago() > 0)
-                                ? est.getDiaPago() : inicio.getDayOfMonth();
+                        Integer dpReg = est.getDiaPago();
+                        int d = (dpReg != null && dpReg > 0) ? dpReg : inicio.getDayOfMonth();
                         LocalDate fin = calcularFechaFin(inicio, 1, d);
                         membresiaCoreRepository.save(
                                 buildAcuerdoMigracion(est, inicio, fin, null, OrigenAcuerdo.DESDE_PENDIENTE));
@@ -1207,7 +1232,8 @@ public class MembresiaCoreService {
                 // fechaInicio: día (diaPago o 3) del mes del pago más antiguo
                 LocalDate fechaPagoViejo = pagoMasViejo.getFechaPago() != null
                         ? pagoMasViejo.getFechaPago() : hoy;
-                int dia = (est.getDiaPago() != null && est.getDiaPago() > 0) ? est.getDiaPago() : 3;
+                Integer rawDia = est.getDiaPago();
+                int dia = (rawDia != null && rawDia > 0) ? rawDia : 3;
                 YearMonth ym = YearMonth.from(fechaPagoViejo);
                 dia = Math.min(dia, ym.lengthOfMonth());
                 LocalDate fechaInicio = fechaPagoViejo.withDayOfMonth(dia);
