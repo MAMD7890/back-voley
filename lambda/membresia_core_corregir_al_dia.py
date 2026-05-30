@@ -60,18 +60,33 @@ def lambda_handler(event, context):
             resultado = json.loads(body)
 
             if solo_preview:
-                total = resultado.get("totalAfectados", 0)
-                logger.info("Total estudiantes AL_DIA sin membresía: %s", total)
-                for item in resultado.get("detalle", []):
+                logger.info(
+                    "Total afectados: %s | Se crearán: %s | Se omitirán: %s",
+                    resultado.get("totalAfectados", 0),
+                    resultado.get("seCrearan", 0),
+                    resultado.get("seOmitiran", 0),
+                )
+                for item in resultado.get("detalle_crear", []):
+                    nueva = item.get("membresiaQueQuedara", {})
                     logger.info(
-                        "Estudiante %s (%s) | pago %s del %s | $%s %s | %s mes(es)",
+                        "CREAR | Estudiante %s (%s) | membresiaActual=%s | "
+                        "nuevaMembresia: %s → %s (%s mes(es), %s) | estadoQuedará=%s | origenFecha=%s",
                         item.get("idEstudiante"),
                         item.get("nombreEstudiante"),
-                        item.get("pagoOrigen_referencia"),
-                        item.get("pagoOrigen_fecha"),
-                        item.get("pagoOrigen_valor"),
-                        item.get("pagoOrigen_metodo"),
-                        item.get("mesesQueAbarcara"),
+                        item.get("membresiaActual"),
+                        nueva.get("fechaInicio"),
+                        nueva.get("fechaFin"),
+                        nueva.get("meses"),
+                        nueva.get("estado"),
+                        item.get("estadoQueQuedara"),
+                        nueva.get("origenFechaInicio"),
+                    )
+                for item in resultado.get("detalle_omitir", []):
+                    logger.info(
+                        "OMITIR | Estudiante %s (%s) | %s",
+                        item.get("idEstudiante"),
+                        item.get("nombreEstudiante"),
+                        item.get("accion"),
                     )
             else:
                 logger.info(

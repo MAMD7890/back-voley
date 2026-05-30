@@ -1222,35 +1222,88 @@ public class MembresiaCoreService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> previsualizarCorreccionAlDiaSinMembresia() {
+        LocalDate hoy = hoy();
         List<Estudiante> afectados = estudianteRepository.findAlDiaSinMembresiaActiva();
 
-        List<Map<String, Object>> detalle = new ArrayList<>();
+        List<Map<String, Object>> seCreara   = new ArrayList<>();
+        List<Map<String, Object>> sinPago    = new ArrayList<>();
+
         for (Estudiante est : afectados) {
-            List<Pago> pagos = pagoRepository.findPagadosSinMembresiaByEstudiante(est.getIdEstudiante());
             Map<String, Object> item = new LinkedHashMap<>();
-            item.put("idEstudiante", est.getIdEstudiante());
+            item.put("idEstudiante",     est.getIdEstudiante());
             item.put("nombreEstudiante", est.getNombreCompleto());
-            item.put("estadoPago", est.getEstadoPago());
-            if (!pagos.isEmpty()) {
-                Pago p = pagos.get(0);
-                item.put("pagoOrigen_id", p.getIdPago());
-                item.put("pagoOrigen_fecha", p.getFechaPago());
-                item.put("pagoOrigen_valor", p.getValor());
-                item.put("pagoOrigen_metodo", p.getMetodoPago());
-                item.put("pagoOrigen_referencia", p.getReferenciaPago());
-                int meses = calcularMesesDesdeValorPago(p.getValor(), p.getMetodoPago());
-                if (meses == 0) meses = calcularMesesSegunMonto(p.getValor());
-                item.put("mesesQueAbarcara", meses);
+            item.put("fechaRegistro",    est.getFechaRegistro());
+            item.put("estadoActual",     est.getEstadoPago());
+
+            // Membresía actual (si existe alguna en historial, aunque no esté activa)
+            List<MembresiaCore> historial = membresiaCoreRepository
+                    .findByEstudianteIdEstudianteOrderByFechaInicioDesc(est.getIdEstudiante());
+            if (!historial.isEmpty()) {
+                MembresiaCore ultima = historial.get(0);
+                Map<String, Object> membActual = new LinkedHashMap<>();
+                membActual.put("id",          ultima.getIdMembresiaCore());
+                membActual.put("estado",      ultima.getEstadoMembresia());
+                membActual.put("fechaInicio", ultima.getFechaInicio());
+                membActual.put("fechaFin",    ultima.getFechaFin());
+                membActual.put("esActiva",    ultima.getEsActiva());
+                item.put("membresiaActual", membActual);
             } else {
-                item.put("pagoOrigen_id", null);
-                item.put("observacion", "Sin pago huérfano encontrado — no se creará membresía");
+                item.put("membresiaActual", "SIN_MEMBRESIA");
             }
-            detalle.add(item);
+
+            List<Pago> pagos = pagoRepository.findPagadosSinMembresiaByEstudiante(est.getIdEstudiante());
+            if (pagos.isEmpty() || membresiaCoreRepository.existsByPagoOrigenIdPago(pagos.get(0).getIdPago())) {
+                item.put("accion", "OMITIR — sin pago huérfano disponible");
+                sinPago.add(item);
+                continue;
+            }
+
+            Pago p = pagos.get(0);
+            int meses = calcularMesesDesdeValorPago(p.getValor(), p.getMetodoPago());
+            if (meses == 0) meses = calcularMesesSegunMonto(p.getValor());
+            if (meses == 0) meses = 1;
+
+            // Calcular fechas exactas que se usarán
+            LocalDate fechaInicio;
+            String origenFechaInicio;
+            if (historial.isEmpty()) {
+                fechaInicio = est.getFechaRegistro() != null ? est.getFechaRegistro()
+                        : (p.getFechaPago() != null ? p.getFechaPago() : hoy);
+                origenFechaInicio = est.getFechaRegistro() != null ? "fechaRegistro" : "fechaPago";
+            } else {
+                LocalDate baseFinFinalizada = ultimaFechaFinFinalizada(est.getIdEstudiante());
+                fechaInicio = baseFinFinalizada != null ? baseFinFinalizada
+                        : (p.getFechaPago() != null ? p.getFechaPago() : hoy);
+                origenFechaInicio = baseFinFinalizada != null ? "finUltimaFinalizada" : "fechaPago";
+            }
+            Integer rawDp = est.getDiaPago();
+            int diaPago = rawDp != null ? rawDp : fechaInicio.getDayOfMonth();
+            LocalDate fechaFin = calcularFechaFin(fechaInicio, meses, diaPago);
+            boolean vigente = fechaFin.isAfter(hoy);
+
+            Map<String, Object> membNueva = new LinkedHashMap<>();
+            membNueva.put("fechaInicio",       fechaInicio);
+            membNueva.put("fechaFin",          fechaFin);
+            membNueva.put("meses",             meses);
+            membNueva.put("estado",            vigente ? "PAGADA" : "FINALIZADA");
+            membNueva.put("origenFechaInicio", origenFechaInicio);
+
+            item.put("accion",       "CREAR");
+            item.put("pago_id",      p.getIdPago());
+            item.put("pago_fecha",   p.getFechaPago());
+            item.put("pago_valor",   p.getValor());
+            item.put("pago_metodo",  p.getMetodoPago());
+            item.put("membresiaQueQuedara", membNueva);
+            item.put("estadoQueQuedara", vigente ? "AL_DIA" : "EN_MORA");
+            seCreara.add(item);
         }
 
         Map<String, Object> resultado = new LinkedHashMap<>();
-        resultado.put("totalAfectados", afectados.size());
-        resultado.put("detalle", detalle);
+        resultado.put("totalAfectados",    afectados.size());
+        resultado.put("seCrearan",         seCreara.size());
+        resultado.put("seOmitiran",        sinPago.size());
+        resultado.put("detalle_crear",     seCreara);
+        resultado.put("detalle_omitir",    sinPago);
         return resultado;
     }
 
@@ -1270,12 +1323,12 @@ public class MembresiaCoreService {
                     continue;
                 }
                 Pago pago = pagos.get(0);
-                TipoMembresia tipo = pago.getMetodoPago() == Pago.MetodoPago.ONLINE
-                        ? TipoMembresia.ONLINE : TipoMembresia.EFECTIVO;
-                crearMembresiaParaPago(est, pago, tipo);
+                if (membresiaCoreRepository.existsByPagoOrigenIdPago(pago.getIdPago())) {
+                    sinPago++;
+                    continue;
+                }
+                crearMembresiaCorrigiendoAlDia(est, pago);
                 creadas++;
-            } catch (IllegalStateException e) {
-                sinPago++;
             } catch (Exception e) {
                 errores++;
             }
@@ -1289,6 +1342,43 @@ public class MembresiaCoreService {
         resultado.put("sinPago", sinPago);
         resultado.put("errores", errores);
         return resultado;
+    }
+
+    private void crearMembresiaCorrigiendoAlDia(Estudiante est, Pago pago) {
+        List<MembresiaCore> historial = membresiaCoreRepository
+                .findByEstudianteIdEstudianteOrderByFechaInicioDesc(est.getIdEstudiante());
+
+        if (historial.isEmpty()) {
+            // Sin historial previo: usar fechaRegistro como fechaInicio
+            LocalDate hoy = hoy();
+            int meses = calcularMesesDesdeValorPago(pago.getValor(), pago.getMetodoPago());
+            if (meses == 0) meses = calcularMesesSegunMonto(pago.getValor());
+            if (meses == 0) meses = 1;
+
+            LocalDate fechaInicio = est.getFechaRegistro() != null ? est.getFechaRegistro()
+                    : (pago.getFechaPago() != null ? pago.getFechaPago() : hoy);
+
+            Integer rawDp = est.getDiaPago();
+            int diaPago = rawDp != null ? rawDp : fechaInicio.getDayOfMonth();
+            LocalDate fechaFin = calcularFechaFin(fechaInicio, meses, diaPago);
+
+            boolean vigente = fechaFin.isAfter(hoy);
+            EstadoMembresia estado = vigente ? EstadoMembresia.PAGADA : EstadoMembresia.FINALIZADA;
+            TipoMembresia tipo = pago.getMetodoPago() == Pago.MetodoPago.ONLINE
+                    ? TipoMembresia.ONLINE : TipoMembresia.EFECTIVO;
+
+            MembresiaCore mc = buildMembresia(est, pago, tipo, fechaInicio, fechaFin, estado, true);
+            membresiaCoreRepository.save(mc);
+
+            est.setDiaPago(diaPago);
+            est.setEstadoPago(vigente ? Estudiante.EstadoPago.AL_DIA : Estudiante.EstadoPago.EN_MORA);
+            estudianteRepository.save(est);
+        } else {
+            // Tiene historial: seguir las reglas normales
+            TipoMembresia tipo = pago.getMetodoPago() == Pago.MetodoPago.ONLINE
+                    ? TipoMembresia.ONLINE : TipoMembresia.EFECTIVO;
+            crearMembresiaParaPago(est, pago, tipo);
+        }
     }
 
     // ─── Job: recuperar membresías faltantes por bug de webhook ─────────────
