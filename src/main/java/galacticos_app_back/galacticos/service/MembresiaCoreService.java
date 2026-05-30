@@ -49,9 +49,8 @@ public class MembresiaCoreService {
      * Ej: diaPago=31, meses=1, fechaInicio=2026-01-31 → 2026-02-28
      */
     public LocalDate calcularFechaFin(LocalDate fechaInicio, int meses, int diaPago) {
-        YearMonth targetMonth = YearMonth.from(fechaInicio).plusMonths(meses);
-        int dia = Math.min(diaPago, targetMonth.lengthOfMonth());
-        return targetMonth.atDay(dia);
+        // diaPago es solo referencia para mora — no afecta la duración de la membresía
+        return fechaInicio.plusMonths(meses);
     }
 
     private int calcularMesesSegunMonto(BigDecimal valor) {
@@ -996,6 +995,103 @@ public class MembresiaCoreService {
         };
     }
 
+    // ─── Corrección de fechaFin calculada con diaPago como anchor ───────────
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> previsualizarCorreccionFechas() {
+        LocalDate hoy = hoy();
+        List<MembresiaCore> candidatas = membresiaCoreRepository.findConPagoOrigenParaCorreccionFechas();
+
+        List<Map<String, Object>> errores   = new ArrayList<>();
+        List<Map<String, Object>> correctas = new ArrayList<>();
+
+        for (MembresiaCore mc : candidatas) {
+            Pago pago = mc.getPagoOrigen();
+            int meses = calcularMesesDesdeValorPago(pago.getValor(), pago.getMetodoPago());
+            if (meses == 0) meses = calcularMesesSegunMonto(pago.getValor());
+            if (meses == 0) continue;
+
+            LocalDate fechaFinCorrecta = mc.getFechaInicio().plusMonths(meses);
+            if (fechaFinCorrecta.equals(mc.getFechaFin())) {
+                correctas.add(Map.of("idMembresiaCore", mc.getIdMembresiaCore()));
+                continue;
+            }
+
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("idMembresiaCore",     mc.getIdMembresiaCore());
+            item.put("idEstudiante",        mc.getEstudiante().getIdEstudiante());
+            item.put("nombreEstudiante",    mc.getEstudiante().getNombreCompleto());
+            item.put("esActiva",            mc.getEsActiva());
+            item.put("estadoMembresia",     mc.getEstadoMembresia());
+            item.put("fechaInicio",         mc.getFechaInicio());
+            item.put("fechaFin_actual",     mc.getFechaFin());
+            item.put("fechaFin_correcta",   fechaFinCorrecta);
+            item.put("diferenciaDias",      mc.getFechaFin().until(fechaFinCorrecta).getDays()
+                                            + mc.getFechaFin().until(fechaFinCorrecta).getMonths() * 30);
+            item.put("meses",               meses);
+            item.put("pago_valor",          pago.getValor());
+            item.put("estadoQueQuedara",    fechaFinCorrecta.isAfter(hoy) ? "PAGADA" : "FINALIZADA");
+            item.put("estadoPagoQueQuedara", fechaFinCorrecta.isAfter(hoy) ? "AL_DIA" : "EN_MORA");
+            errores.add(item);
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("totalEvaluadas",  candidatas.size());
+        resultado.put("conErrorFecha",   errores.size());
+        resultado.put("correctas",       correctas.size());
+        resultado.put("detalle_errores", errores);
+        return resultado;
+    }
+
+    @Transactional
+    public Map<String, Object> corregirFechasCalculadasConDiaPago() {
+        LocalDate hoy = hoy();
+        List<MembresiaCore> candidatas = membresiaCoreRepository.findConPagoOrigenParaCorreccionFechas();
+
+        int corregidas = 0;
+        int sinCambio  = 0;
+        int errores    = 0;
+
+        for (MembresiaCore mc : candidatas) {
+            try {
+                Pago pago = mc.getPagoOrigen();
+                int meses = calcularMesesDesdeValorPago(pago.getValor(), pago.getMetodoPago());
+                if (meses == 0) meses = calcularMesesSegunMonto(pago.getValor());
+                if (meses == 0) { sinCambio++; continue; }
+
+                LocalDate fechaFinCorrecta = mc.getFechaInicio().plusMonths(meses);
+                if (fechaFinCorrecta.equals(mc.getFechaFin())) { sinCambio++; continue; }
+
+                mc.setFechaFin(fechaFinCorrecta);
+                boolean vigente = fechaFinCorrecta.isAfter(hoy);
+                mc.setEstadoMembresia(vigente ? EstadoMembresia.PAGADA : EstadoMembresia.FINALIZADA);
+                mc.setMotivoCambio("FECHA_FIN_CORREGIDA");
+                mc.setFechaUltimoCambio(ahora());
+                membresiaCoreRepository.save(mc);
+
+                if (Boolean.TRUE.equals(mc.getEsActiva())) {
+                    Estudiante est = mc.getEstudiante();
+                    est.setEstadoPago(vigente
+                            ? Estudiante.EstadoPago.AL_DIA
+                            : Estudiante.EstadoPago.EN_MORA);
+                    estudianteRepository.save(est);
+                }
+                corregidas++;
+            } catch (Exception e) {
+                errores++;
+            }
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("job",        "CorregirFechasCalculadasConDiaPago");
+        resultado.put("fecha",      hoy.toString());
+        resultado.put("evaluadas",  candidatas.size());
+        resultado.put("corregidas", corregidas);
+        resultado.put("sinCambio",  sinCambio);
+        resultado.put("errores",    errores);
+        return resultado;
+    }
+
     // ─── Corrección de pagos duplicados ──────────────────────────────────────
 
     @Transactional
@@ -1358,8 +1454,9 @@ public class MembresiaCoreService {
             LocalDate fechaInicio = est.getFechaRegistro() != null ? est.getFechaRegistro()
                     : (pago.getFechaPago() != null ? pago.getFechaPago() : hoy);
 
-            Integer rawDp = est.getDiaPago();
-            int diaPago = rawDp != null ? rawDp : fechaInicio.getDayOfMonth();
+            // Para primer registro siempre usar el día de fechaInicio como anchor,
+            // ignorando diaPago previo que puede ser de otro contexto y dar coberturas injustas
+            int diaPago = fechaInicio.getDayOfMonth();
             LocalDate fechaFin = calcularFechaFin(fechaInicio, meses, diaPago);
 
             boolean vigente = fechaFin.isAfter(hoy);

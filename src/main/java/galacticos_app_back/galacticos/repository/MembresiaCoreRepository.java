@@ -146,6 +146,12 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
     List<MembresiaCore> findByEstudianteIdEstudianteAndMotivoCambio(
             Integer idEstudiante, String motivoCambio);
 
+    // Corrección fechas: membresías con pago vinculado para recalcular fechaFin
+    @Query("SELECT m FROM MembresiaCore m WHERE m.pagoOrigen IS NOT NULL " +
+           "AND m.estadoMembresia IN ('PAGADA', 'FINALIZADA') " +
+           "AND m.fechaInicio IS NOT NULL AND m.fechaFin IS NOT NULL")
+    List<MembresiaCore> findConPagoOrigenParaCorreccionFechas();
+
     // Corrección tipo: EFECTIVO con pago ONLINE o ONLINE con pago EFECTIVO
     @Query("SELECT m FROM MembresiaCore m WHERE m.pagoOrigen IS NOT NULL " +
            "AND m.tipoMembresia IN ('EFECTIVO', 'ONLINE') " +

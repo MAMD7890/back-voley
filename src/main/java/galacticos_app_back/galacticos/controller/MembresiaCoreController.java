@@ -103,6 +103,20 @@ public class MembresiaCoreController {
         return ResponseEntity.ok(membresiaCoreService.ejecutarJobRecuperarMembresiasFaltantes());
     }
 
+    @GetMapping("/api/internal/membresias-core/jobs/corregir-fechas-diapago/preview")
+    public ResponseEntity<Map<String, Object>> previewCorregirFechasDiaPago(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.previsualizarCorreccionFechas());
+    }
+
+    @PostMapping("/api/internal/membresias-core/jobs/corregir-fechas-diapago")
+    public ResponseEntity<Map<String, Object>> jobCorregirFechasDiaPago(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.corregirFechasCalculadasConDiaPago());
+    }
+
     @PostMapping("/api/internal/membresias-core/jobs/sincronizar-estados")
     public ResponseEntity<Map<String, Object>> job5SincronizarEstados(
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
