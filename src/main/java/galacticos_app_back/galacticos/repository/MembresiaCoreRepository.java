@@ -96,12 +96,15 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
             TipoMembresia tipo,
             EstadoMembresia estado);
 
-    // Membresía marcada explícitamente como activa (solo una por estudiante)
-    Optional<MembresiaCore> findByEstudianteIdEstudianteAndEsActivaTrue(Integer idEstudiante);
-
     // Para desactivar la activa anterior antes de asignar una nueva
-    @Query("SELECT m FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante AND m.esActiva = true")
+    @Query("SELECT m FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante AND m.esActiva = true ORDER BY m.idMembresiaCore DESC")
     List<MembresiaCore> findActivas(@Param("idEstudiante") Integer idEstudiante);
+
+    // Membresía activa del estudiante — si hay duplicados por inconsistencia de datos, retorna la más reciente
+    default Optional<MembresiaCore> findByEstudianteIdEstudianteAndEsActivaTrue(Integer idEstudiante) {
+        List<MembresiaCore> lista = findActivas(idEstudiante);
+        return lista.isEmpty() ? Optional.empty() : Optional.of(lista.get(0));
+    }
 
     // Última FINALIZADA del estudiante (para restaurar tras Job4 y base de continuidad de mora)
     @Query("SELECT m FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante " +

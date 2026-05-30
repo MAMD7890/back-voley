@@ -76,11 +76,11 @@ public class EstudiantePanelService {
     public Map<String, Long> resumen(Integer idSede) {
 
         long total      = estudianteRepository.count(buildSpec(null, null, idSede, null,                                  null));
-        long alDia      = estudianteRepository.count(buildSpec(null, null, idSede, Estudiante.EstadoPago.AL_DIA,          null));
-        long pendientes = estudianteRepository.count(buildSpec(null, null, idSede, Estudiante.EstadoPago.PENDIENTE,       null));
-        long enMora     = estudianteRepository.count(buildSpec(null, null, idSede, Estudiante.EstadoPago.EN_MORA,         null));
-        long compromiso = estudianteRepository.count(buildSpec(null, null, idSede, Estudiante.EstadoPago.COMPROMISO_PAGO, null));
-        long declinado  = estudianteRepository.count(buildSpec(null, null, idSede, Estudiante.EstadoPago.DECLINADO,       null));
+        long alDia      = estudianteRepository.count(buildSpec(null, null, idSede, Estudiante.EstadoPago.AL_DIA,          true));
+        long pendientes = estudianteRepository.count(buildSpec(null, null, idSede, Estudiante.EstadoPago.PENDIENTE,       true));
+        long enMora     = estudianteRepository.count(buildSpec(null, null, idSede, Estudiante.EstadoPago.EN_MORA,         true));
+        long compromiso = estudianteRepository.count(buildSpec(null, null, idSede, Estudiante.EstadoPago.COMPROMISO_PAGO, true));
+        long declinado  = estudianteRepository.count(buildSpec(null, null, idSede, Estudiante.EstadoPago.DECLINADO,       true));
         long inactivos  = estudianteRepository.count(buildSpec(null, null, idSede, null,                                  false));
 
         Map<String, Long> r = new java.util.LinkedHashMap<>();

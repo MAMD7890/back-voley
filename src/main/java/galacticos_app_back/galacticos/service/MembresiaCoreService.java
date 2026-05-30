@@ -1218,6 +1218,79 @@ public class MembresiaCoreService {
         return resultado;
     }
 
+    // ─── Job: corregir estudiantes AL_DIA sin membresía activa ──────────────
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> previsualizarCorreccionAlDiaSinMembresia() {
+        List<Estudiante> afectados = estudianteRepository.findAlDiaSinMembresiaActiva();
+
+        List<Map<String, Object>> detalle = new ArrayList<>();
+        for (Estudiante est : afectados) {
+            List<Pago> pagos = pagoRepository.findPagadosSinMembresiaByEstudiante(est.getIdEstudiante());
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("idEstudiante", est.getIdEstudiante());
+            item.put("nombreEstudiante", est.getNombreCompleto());
+            item.put("estadoPago", est.getEstadoPago());
+            if (!pagos.isEmpty()) {
+                Pago p = pagos.get(0);
+                item.put("pagoOrigen_id", p.getIdPago());
+                item.put("pagoOrigen_fecha", p.getFechaPago());
+                item.put("pagoOrigen_valor", p.getValor());
+                item.put("pagoOrigen_metodo", p.getMetodoPago());
+                item.put("pagoOrigen_referencia", p.getReferenciaPago());
+                int meses = calcularMesesDesdeValorPago(p.getValor(), p.getMetodoPago());
+                if (meses == 0) meses = calcularMesesSegunMonto(p.getValor());
+                item.put("mesesQueAbarcara", meses);
+            } else {
+                item.put("pagoOrigen_id", null);
+                item.put("observacion", "Sin pago huérfano encontrado — no se creará membresía");
+            }
+            detalle.add(item);
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("totalAfectados", afectados.size());
+        resultado.put("detalle", detalle);
+        return resultado;
+    }
+
+    @Transactional
+    public Map<String, Object> ejecutarJobCorregirAlDiaSinMembresia() {
+        List<Estudiante> afectados = estudianteRepository.findAlDiaSinMembresiaActiva();
+
+        int creadas  = 0;
+        int sinPago  = 0;
+        int errores  = 0;
+
+        for (Estudiante est : afectados) {
+            try {
+                List<Pago> pagos = pagoRepository.findPagadosSinMembresiaByEstudiante(est.getIdEstudiante());
+                if (pagos.isEmpty()) {
+                    sinPago++;
+                    continue;
+                }
+                Pago pago = pagos.get(0);
+                TipoMembresia tipo = pago.getMetodoPago() == Pago.MetodoPago.ONLINE
+                        ? TipoMembresia.ONLINE : TipoMembresia.EFECTIVO;
+                crearMembresiaParaPago(est, pago, tipo);
+                creadas++;
+            } catch (IllegalStateException e) {
+                sinPago++;
+            } catch (Exception e) {
+                errores++;
+            }
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("job", "CorregirAlDiaSinMembresia");
+        resultado.put("fecha", hoy().toString());
+        resultado.put("afectados", afectados.size());
+        resultado.put("creadas", creadas);
+        resultado.put("sinPago", sinPago);
+        resultado.put("errores", errores);
+        return resultado;
+    }
+
     // ─── Job: recuperar membresías faltantes por bug de webhook ─────────────
 
     @Transactional

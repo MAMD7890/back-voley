@@ -124,4 +124,12 @@ public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecifi
            "AND NOT EXISTS (SELECT m FROM MembresiaCore m WHERE m.pagoOrigen = p) " +
            "ORDER BY p.fechaPago DESC, p.idPago DESC")
     List<Pago> findPagadosOnlineSinMembresia();
+
+    // Pagos PAGADOS (ONLINE o EFECTIVO) de un estudiante sin membresía vinculada
+    @Query("SELECT p FROM Pago p " +
+           "WHERE p.estudiante.idEstudiante = :idEstudiante " +
+           "AND p.estadoPago = 'PAGADO' " +
+           "AND NOT EXISTS (SELECT m FROM MembresiaCore m WHERE m.pagoOrigen = p) " +
+           "ORDER BY p.fechaPago DESC, p.idPago DESC")
+    List<Pago> findPagadosSinMembresiaByEstudiante(@Param("idEstudiante") Integer idEstudiante);
 }

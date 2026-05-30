@@ -82,6 +82,20 @@ public class MembresiaCoreController {
         return ResponseEntity.ok(membresiaCoreService.revertirMembresiasCreadasIndebidamente(fecha));
     }
 
+    @GetMapping("/api/internal/membresias-core/jobs/corregir-al-dia-sin-membresia/preview")
+    public ResponseEntity<Map<String, Object>> previewCorregirAlDiaSinMembresia(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.previsualizarCorreccionAlDiaSinMembresia());
+    }
+
+    @PostMapping("/api/internal/membresias-core/jobs/corregir-al-dia-sin-membresia")
+    public ResponseEntity<Map<String, Object>> jobCorregirAlDiaSinMembresia(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.ejecutarJobCorregirAlDiaSinMembresia());
+    }
+
     @PostMapping("/api/internal/membresias-core/jobs/recuperar-membresias-faltantes")
     public ResponseEntity<Map<String, Object>> jobRecuperarMembresiasFaltantes(
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {

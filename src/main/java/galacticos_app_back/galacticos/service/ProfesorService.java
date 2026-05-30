@@ -3,6 +3,7 @@ package galacticos_app_back.galacticos.service;
 import galacticos_app_back.galacticos.dto.auth.AuthResponse;
 import galacticos_app_back.galacticos.dto.auth.RegisterRequest;
 import galacticos_app_back.galacticos.entity.Profesor;
+import galacticos_app_back.galacticos.repository.AsistenciaProfesorRepository;
 import galacticos_app_back.galacticos.repository.ProfesorRepository;
 import galacticos_app_back.galacticos.repository.UsuarioRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,9 @@ public class ProfesorService {
     
     @Autowired
     private ProfesorRepository profesorRepository;
+
+    @Autowired
+    private AsistenciaProfesorRepository asistenciaProfesorRepository;
     
     @Autowired
     private AuthService authService;
@@ -179,7 +183,9 @@ public class ProfesorService {
         return null;
     }
     
+    @Transactional
     public void eliminar(Integer id) {
+        asistenciaProfesorRepository.deleteByProfesorIdProfesor(id);
         profesorRepository.deleteById(id);
     }
     

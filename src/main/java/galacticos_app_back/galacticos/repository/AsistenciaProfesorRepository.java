@@ -13,4 +13,5 @@ public interface AsistenciaProfesorRepository extends JpaRepository<AsistenciaPr
 	List<AsistenciaProfesor> findByProfesorIdProfesorAndFechaBetween(Integer idProfesor, java.time.LocalDate desde, java.time.LocalDate hasta);
 	List<AsistenciaProfesor> findByProfesorIdProfesorOrderByFechaDesc(Integer idProfesor);
 	List<AsistenciaProfesor> findByFecha(java.time.LocalDate fecha);
+	void deleteByProfesorIdProfesor(Integer idProfesor);
 }

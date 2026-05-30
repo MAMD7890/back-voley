@@ -3,6 +3,7 @@ package galacticos_app_back.galacticos.repository;
 import galacticos_app_back.galacticos.entity.Estudiante;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -24,4 +25,9 @@ public interface EstudianteRepository extends JpaRepository<Estudiante, Integer>
     
     // Buscar por correo electrónico del estudiante (para vincular pagos de Wompi)
     Optional<Estudiante> findByCorreoEstudiante(String correoEstudiante);
+
+    // Estudiantes AL_DIA pero sin membresía activa (esActiva=true) en membresia_core
+    @Query("SELECT e FROM Estudiante e WHERE e.estadoPago = 'AL_DIA' AND e.estado = true " +
+           "AND NOT EXISTS (SELECT m FROM MembresiaCore m WHERE m.estudiante = e AND m.esActiva = true)")
+    List<Estudiante> findAlDiaSinMembresiaActiva();
 }
