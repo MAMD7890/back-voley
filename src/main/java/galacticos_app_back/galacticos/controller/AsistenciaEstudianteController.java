@@ -85,6 +85,11 @@ public class AsistenciaEstudianteController {
     public ResponseEntity<AsistenciaEstudiante> crear(@RequestBody AsistenciaEstudiante asistencia) {
         return ResponseEntity.ok(asistenciaEstudianteService.crear(asistencia));
     }
+
+    @PostMapping("/bulk")
+    public ResponseEntity<List<AsistenciaEstudiante>> crearBulk(@RequestBody List<AsistenciaEstudiante> asistencias) {
+        return ResponseEntity.ok(asistenciaEstudianteService.crearBulk(asistencias));
+    }
     
     @PutMapping("/{id}")
     public ResponseEntity<AsistenciaEstudiante> actualizar(@PathVariable Integer id, @RequestBody AsistenciaEstudiante asistencia) {

@@ -30,6 +30,7 @@ public class ReportePagoWompiDTO {
     private String mesPagado;
     private String metodoPago;
     private String estadoPago;
+    private String observacion;
     
     // Información del estudiante
     private Integer idEstudiante;

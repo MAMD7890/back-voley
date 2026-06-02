@@ -46,9 +46,12 @@ public class Pago {
     
     @Column(length = 100)
     private String wompiTransactionId;
-    
+
+    @Column(length = 255)
+    private String observacion;
+
     public enum MetodoPago {
-        ONLINE, EFECTIVO
+        ONLINE, EFECTIVO, TRANSFERENCIA
     }
     
     public enum EstadoPago {

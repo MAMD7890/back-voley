@@ -1,5 +1,6 @@
 package galacticos_app_back.galacticos.controller;
 
+import galacticos_app_back.galacticos.dto.RegistroPagoManualDTO;
 import galacticos_app_back.galacticos.dto.ReportePagoWompiDTO;
 import galacticos_app_back.galacticos.dto.ResumenPagosWompiDTO;
 import galacticos_app_back.galacticos.entity.Pago;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -56,6 +58,20 @@ public class PagoController {
     @PostMapping
     public ResponseEntity<Pago> crear(@RequestBody Pago pago) {
         return ResponseEntity.ok(pagoService.registrarPago(pago));
+    }
+
+    @PostMapping("/manual")
+    public ResponseEntity<?> registrarPagoManual(@RequestBody RegistroPagoManualDTO dto) {
+        try {
+            Map<String, Object> resultado = pagoService.registrarPagoManual(dto);
+            return ResponseEntity.ok(resultado);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
     
     @PutMapping("/{id}")

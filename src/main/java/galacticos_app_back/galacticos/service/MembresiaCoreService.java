@@ -159,9 +159,13 @@ public class MembresiaCoreService {
                 // Para cualquier otro tipo activo, continúa desde la última FINALIZADA.
                 LocalDate base;
                 if (activa.getTipoMembresia() == TipoMembresia.PENDIENTE_REGISTRO
-                        && activa.getFechaInicio() != null) {
+                        && activa.getFechaInicio() != null
+                        && activa.getFechaLimiteGracia() != null
+                        && !activa.getFechaLimiteGracia().isBefore(hoy)) {
+                    // Gracia aún vigente: el admin asignó una fecha de inicio con intención
                     base = activa.getFechaInicio();
                 } else {
+                    // Gracia vencida, o no es PENDIENTE_REGISTRO: arrancar desde la última FINALIZADA
                     base = ultimaFechaFinFinalizada(estudiante.getIdEstudiante());
                     if (base == null) base = pago.getFechaPago() != null ? pago.getFechaPago() : hoy;
                 }
@@ -1476,6 +1480,109 @@ public class MembresiaCoreService {
                     ? TipoMembresia.ONLINE : TipoMembresia.EFECTIVO;
             crearMembresiaParaPago(est, pago, tipo);
         }
+    }
+
+    // ─── Registro de pago manual con rango de fechas ────────────────────────
+
+    @Transactional
+    public Map<String, Object> crearMembresiaManualConFechas(Estudiante estudiante, Pago pago,
+                                                              LocalDate fechaInicio, LocalDate fechaFin) {
+        LocalDate hoy = hoy();
+
+        if (fechaInicio.isAfter(fechaFin)) {
+            throw new IllegalArgumentException(
+                    "fechaInicio (" + fechaInicio + ") no puede ser posterior a fechaFin (" + fechaFin + ")");
+        }
+
+        TipoMembresia tipo = pago.getMetodoPago() == Pago.MetodoPago.ONLINE
+                ? TipoMembresia.ONLINE : TipoMembresia.EFECTIVO;
+
+        Optional<MembresiaCore> activaOpt =
+                membresiaCoreRepository.findByEstudianteIdEstudianteAndEsActivaTrue(estudiante.getIdEstudiante());
+
+        MembresiaCore membresia;
+
+        if (activaOpt.isPresent()) {
+            MembresiaCore activa = activaOpt.get();
+
+            // Caso 1: membresía PAGADA activa
+            if (activa.getEstadoMembresia() == EstadoMembresia.PAGADA) {
+
+                // Solapamiento → error
+                boolean solapa = !fechaInicio.isAfter(activa.getFechaFin())
+                        && !fechaFin.isBefore(activa.getFechaInicio());
+                if (solapa) {
+                    throw new IllegalStateException(
+                            "Ya existe una membresía PAGADA activa del " + activa.getFechaInicio()
+                            + " al " + activa.getFechaFin() + ". No se puede registrar un pago en esas fechas.");
+                }
+
+                // Pago anticipado: inicio después del fin de la activa
+                if (fechaInicio.isAfter(activa.getFechaFin())) {
+                    membresia = buildMembresiaManual(estudiante, pago, tipo, fechaInicio, fechaFin,
+                            EstadoMembresia.PAGADA, false);
+                    membresiaCoreRepository.save(membresia);
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("tipo", "ANTICIPADO");
+                    r.put("membresia", MembresiaCoreDTO.from(membresia));
+                    return r;
+                }
+            }
+
+            // Caso 2: membresía PENDIENTE_REGISTRO activa → finalizarla
+            if (activa.getTipoMembresia() == TipoMembresia.PENDIENTE_REGISTRO) {
+                activa.setEstadoMembresia(EstadoMembresia.FINALIZADA);
+                activa.setEsActiva(false);
+                activa.setMotivoCambio("REEMPLAZADA_POR_PAGO_MANUAL");
+                activa.setFechaUltimoCambio(ahora());
+                membresiaCoreRepository.save(activa);
+            } else {
+                desactivarActual(estudiante.getIdEstudiante());
+            }
+        }
+
+        // Crear membresía con las fechas dadas
+        boolean vigente = fechaFin.isAfter(hoy);
+        EstadoMembresia estado = vigente ? EstadoMembresia.PAGADA : EstadoMembresia.FINALIZADA;
+        membresia = buildMembresiaManual(estudiante, pago, tipo, fechaInicio, fechaFin, estado, true);
+        membresiaCoreRepository.save(membresia);
+
+        if (vigente) {
+            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+        } else {
+            estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+        }
+        if (!Boolean.TRUE.equals(estudiante.getEstado())) estudiante.setEstado(true);
+        estudianteRepository.save(estudiante);
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("tipo", "NUEVO");
+        r.put("membresia", MembresiaCoreDTO.from(membresia));
+        return r;
+    }
+
+    private MembresiaCore buildMembresiaManual(Estudiante est, Pago pago, TipoMembresia tipo,
+                                                LocalDate inicio, LocalDate fin,
+                                                EstadoMembresia estado, boolean activa) {
+        long meses = java.time.temporal.ChronoUnit.MONTHS.between(inicio, fin);
+        if (meses < 1) meses = 1;
+        BigDecimal valorMensual = pago.getValor() != null
+                ? pago.getValor().divide(new BigDecimal(meses), 2, java.math.RoundingMode.HALF_UP)
+                : null;
+
+        MembresiaCore m = new MembresiaCore();
+        m.setEstudiante(est);
+        m.setPagoOrigen(pago);
+        m.setTipoMembresia(tipo);
+        m.setEstadoMembresia(estado);
+        m.setFechaInicio(inicio);
+        m.setFechaFin(fin);
+        m.setValorMensual(valorMensual);
+        m.setEsActiva(activa);
+        m.setFechaCreacion(ahora());
+        m.setFechaUltimoCambio(ahora());
+        m.setMotivoCambio("PAGO_CONFIRMADO");
+        return m;
     }
 
     // ─── Job: recuperar membresías faltantes por bug de webhook ─────────────

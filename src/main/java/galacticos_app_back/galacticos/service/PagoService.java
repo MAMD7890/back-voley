@@ -1,11 +1,17 @@
 package galacticos_app_back.galacticos.service;
 
+import galacticos_app_back.galacticos.dto.RegistroPagoManualDTO;
 import galacticos_app_back.galacticos.dto.ReportePagoWompiDTO;
 import galacticos_app_back.galacticos.dto.ResumenPagosWompiDTO;
 import galacticos_app_back.galacticos.entity.Estudiante;
 import galacticos_app_back.galacticos.entity.Pago;
 import galacticos_app_back.galacticos.repository.EstudianteRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.util.Map;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.JoinType;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,9 +36,12 @@ public class PagoService {
     
     @Autowired
     private PagoRepository pagoRepository;
-    
+
     @Autowired
     private EstudianteRepository estudianteRepository;
+
+    @Autowired
+    private MembresiaCoreService membresiaCoreService;
     
     // Obtener todos los pagos
     public List<Pago> obtenerTodos() {
@@ -64,10 +73,41 @@ public class PagoService {
         return pagoRepository.findByEstadoPago(Pago.EstadoPago.VENCIDO);
     }
     
-    // Registrar pago
+    // Registrar pago (flujo legacy)
     public Pago registrarPago(Pago pago) {
         pago.setEstadoPago(Pago.EstadoPago.PAGADO);
         return pagoRepository.save(pago);
+    }
+
+    // Registrar pago manual (EFECTIVO / TRANSFERENCIA) con rango de fechas
+    @Transactional
+    public Map<String, Object> registrarPagoManual(RegistroPagoManualDTO dto) {
+        Estudiante estudiante = estudianteRepository.findById(dto.getIdEstudiante())
+                .orElseThrow(() -> new RuntimeException("Estudiante no encontrado: " + dto.getIdEstudiante()));
+
+        if (dto.getFechaInicio() == null || dto.getFechaFin() == null) {
+            throw new IllegalArgumentException("fechaInicio y fechaFin son obligatorias");
+        }
+        if (dto.getMetodoPago() == Pago.MetodoPago.ONLINE) {
+            throw new IllegalArgumentException("Este endpoint es solo para pagos manuales (EFECTIVO o TRANSFERENCIA)");
+        }
+
+        Pago pago = new Pago();
+        pago.setEstudiante(estudiante);
+        pago.setValor(dto.getValor());
+        pago.setMetodoPago(dto.getMetodoPago() != null ? dto.getMetodoPago() : Pago.MetodoPago.EFECTIVO);
+        pago.setObservacion(dto.getObservacion());
+        pago.setMesPagado(dto.getMesPagado());
+        pago.setFechaPago(LocalDate.now(ZoneId.of("America/Bogota")));
+        pago.setHoraPago(LocalTime.now(ZoneId.of("America/Bogota")));
+        pago.setEstadoPago(Pago.EstadoPago.PAGADO);
+        pago.setReferenciaPago("EFECT-" + dto.getIdEstudiante() + "-" + System.currentTimeMillis());
+        Pago pagoGuardado = pagoRepository.save(pago);
+
+        Map<String, Object> resultado = membresiaCoreService.crearMembresiaManualConFechas(
+                estudiante, pagoGuardado, dto.getFechaInicio(), dto.getFechaFin());
+        resultado.put("pago", pagoGuardado);
+        return resultado;
     }
     
     // Actualizar pago completo
@@ -364,7 +404,8 @@ public class PagoService {
                 .horaPago(pago.getHoraPago())
                 .mesPagado(pago.getMesPagado())
                 .metodoPago(pago.getMetodoPago() != null ? pago.getMetodoPago().name() : null)
-                .estadoPago(pago.getEstadoPago() != null ? pago.getEstadoPago().name() : null);
+                .estadoPago(pago.getEstadoPago() != null ? pago.getEstadoPago().name() : null)
+                .observacion(pago.getObservacion());
         
         // Agregar información del estudiante
         if (pago.getEstudiante() != null) {

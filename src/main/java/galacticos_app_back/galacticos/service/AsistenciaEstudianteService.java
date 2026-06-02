@@ -90,13 +90,24 @@ public class AsistenciaEstudianteService {
         return asistenciaEstudianteRepository.save(asistencia);
     }
     
+    @org.springframework.transaction.annotation.Transactional
+    public List<AsistenciaEstudiante> crearBulk(List<AsistenciaEstudiante> asistencias) {
+        return asistencias.stream()
+                .map(this::crear)
+                .collect(Collectors.toList());
+    }
+
     public AsistenciaEstudiante actualizar(Integer id, AsistenciaEstudiante asistencia) {
-        Optional<AsistenciaEstudiante> existente = asistenciaEstudianteRepository.findById(id);
-        if (existente.isPresent()) {
-            asistencia.setIdAsistencia(id);
-            return asistenciaEstudianteRepository.save(asistencia);
-        }
-        return null;
+        Optional<AsistenciaEstudiante> existenteOpt = asistenciaEstudianteRepository.findById(id);
+        if (existenteOpt.isEmpty()) return null;
+
+        AsistenciaEstudiante existente = existenteOpt.get();
+        if (asistencia.getAsistio() != null)      existente.setAsistio(asistencia.getAsistio());
+        if (asistencia.getObservaciones() != null) existente.setObservaciones(asistencia.getObservaciones());
+        if (asistencia.getFecha() != null)         existente.setFecha(asistencia.getFecha());
+        if (asistencia.getEquipo() != null)        existente.setEquipo(asistencia.getEquipo());
+        if (asistencia.getEstudiante() != null)    existente.setEstudiante(asistencia.getEstudiante());
+        return asistenciaEstudianteRepository.save(existente);
     }
     
     public void eliminar(Integer id) {
