@@ -48,6 +48,7 @@ public class EstudianteConMembresiaDTO {
         private LocalDate fechaLimiteCompromiso;
         private BigDecimal valorMensual;
         private String observacion;
+        private String mesPagado;
         private Long diasRestantes;
         private Boolean esActiva;
     }
@@ -89,7 +90,13 @@ public class EstudianteConMembresiaDTO {
             resumen.setFechaLimiteGracia(mc.getFechaLimiteGracia());
             resumen.setFechaLimiteCompromiso(mc.getFechaLimiteCompromiso());
             resumen.setValorMensual(mc.getValorMensual());
-            resumen.setObservacion(mc.getObservacion());
+            boolean esPagoManual = mc.getTipoMembresia() == MembresiaCore.TipoMembresia.EFECTIVO;
+            String obs = mc.getObservacion() != null ? mc.getObservacion()
+                    : (esPagoManual && mc.getPagoOrigen() != null ? mc.getPagoOrigen().getObservacion() : null);
+            resumen.setObservacion(obs);
+            if (mc.getPagoOrigen() != null) {
+                resumen.setMesPagado(mc.getPagoOrigen().getMesPagado());
+            }
             resumen.setDiasRestantes(diasRestantes);
             resumen.setEsActiva(mc.getEsActiva());
             dto.setMembresiaActiva(resumen);

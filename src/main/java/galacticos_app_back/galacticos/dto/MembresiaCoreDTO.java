@@ -32,6 +32,7 @@ public class MembresiaCoreDTO {
     private LocalDate fechaPagoOrigen;
     private String metodoPagoOrigen;
     private String mesPagadoOrigen;
+    private String observacionPago;
 
     // Campos propios de MembresiaCore
     private MembresiaCore.TipoMembresia tipoMembresia;
@@ -72,6 +73,7 @@ public class MembresiaCoreDTO {
                 dto.setMetodoPagoOrigen(m.getPagoOrigen().getMetodoPago().name());
             }
             dto.setMesPagadoOrigen(m.getPagoOrigen().getMesPagado());
+            dto.setObservacionPago(m.getPagoOrigen().getObservacion());
         }
 
         dto.setTipoMembresia(m.getTipoMembresia());
