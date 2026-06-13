@@ -96,6 +96,13 @@ public class MembresiaCoreController {
         return ResponseEntity.ok(membresiaCoreService.ejecutarJobCorregirAlDiaSinMembresia());
     }
 
+    @GetMapping("/api/internal/membresias-core/jobs/recuperar-membresias-faltantes/preview")
+    public ResponseEntity<Map<String, Object>> previewRecuperarMembresiasFaltantes(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.previsualizarRecuperarMembresiasFaltantes());
+    }
+
     @PostMapping("/api/internal/membresias-core/jobs/recuperar-membresias-faltantes")
     public ResponseEntity<Map<String, Object>> jobRecuperarMembresiasFaltantes(
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {

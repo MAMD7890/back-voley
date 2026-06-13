@@ -30,4 +30,11 @@ public interface EstudianteRepository extends JpaRepository<Estudiante, Integer>
     @Query("SELECT e FROM Estudiante e WHERE e.estadoPago = 'AL_DIA' AND e.estado = true " +
            "AND NOT EXISTS (SELECT m FROM MembresiaCore m WHERE m.estudiante = e AND m.esActiva = true)")
     List<Estudiante> findAlDiaSinMembresiaActiva();
+
+    // Estudiantes AL_DIA sin membresía PAGADA vigente (fechaFin >= hoy).
+    // Captura: sin membresía, con FINALIZADA, con PENDIENTE_REGISTRO, con ACUERDO_PAGO.
+    @Query("SELECT e FROM Estudiante e WHERE e.estadoPago = 'AL_DIA' AND e.estado = true " +
+           "AND NOT EXISTS (SELECT m FROM MembresiaCore m WHERE m.estudiante = e AND m.esActiva = true " +
+           "AND m.estadoMembresia = 'PAGADA' AND m.fechaFin >= CURRENT_DATE)")
+    List<Estudiante> findAlDiaSinMembresiaPagadaVigente();
 }

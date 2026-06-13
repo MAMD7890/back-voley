@@ -1,12 +1,14 @@
 """
 Lambda: galacticos-membresia-recuperar-faltantes
-Trigger: MANUAL — ejecutar para corregir membresías faltantes por bug del webhook.
+Trigger: MANUAL — ejecutar DESPUÉS de validar con el preview.
 
-Qué hace:
-  - Busca pagos ONLINE PAGADOS de estudiantes AL_DÍA que no tienen
-    membresía asociada en membresia_core (pagoOrigen huérfano).
-  - Por cada estudiante toma solo el pago más reciente y crea la membresía.
-  - Es idempotente: si la membresía ya existe la omite.
+Busca pagos ONLINE PAGADOS sin membresía asociada en membresia_core (pagoOrigen huérfano).
+Por cada estudiante toma el pago más reciente y crea la membresía.
+Es idempotente: si la membresía ya existe la omite.
+
+Modos de ejecución:
+  {"preview": true}   → solo consulta, sin cambios (muestra qué se crearía)
+  {}                  → ejecuta la corrección
 
 Variables de entorno requeridas:
   BACKEND_URL       → https://tu-dominio.com  (sin slash final)
@@ -24,37 +26,69 @@ logger.setLevel(logging.INFO)
 
 BACKEND_URL = os.environ["BACKEND_URL"].rstrip("/")
 INTERNAL_API_KEY = os.environ["INTERNAL_API_KEY"]
-ENDPOINT = f"{BACKEND_URL}/api/internal/membresias-core/jobs/recuperar-membresias-faltantes"
-TIMEOUT_SEG = 120
 
 
 def lambda_handler(event, context):
-    logger.info("Job RecuperarMembresiasFaltantes iniciando...")
-    logger.info("Endpoint: %s", ENDPOINT)
+    solo_preview = event.get("preview", False)
+
+    if solo_preview:
+        endpoint = f"{BACKEND_URL}/api/internal/membresias-core/jobs/recuperar-membresias-faltantes/preview"
+        method = "GET"
+        data = None
+    else:
+        endpoint = f"{BACKEND_URL}/api/internal/membresias-core/jobs/recuperar-membresias-faltantes"
+        method = "POST"
+        data = b"{}"
+
+    logger.info("Modo: %s | Endpoint: %s", "PREVIEW" if solo_preview else "EJECUTAR", endpoint)
 
     req = urllib.request.Request(
-        url=ENDPOINT,
-        method="POST",
+        url=endpoint,
+        method=method,
         headers={
             "X-Internal-Api-Key": INTERNAL_API_KEY,
             "Content-Type": "application/json",
         },
-        data=b"{}",
+        data=data,
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SEG) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             body = resp.read().decode("utf-8")
             resultado = json.loads(body)
-            logger.info("OK %d: %s", resp.status, body)
-            logger.info(
-                "pagosHuerfanos=%s estudiantesEvaluados=%s creadas=%s omitidas=%s errores=%s",
-                resultado.get("pagosHuerfanos", "?"),
-                resultado.get("estudiantesEvaluados", "?"),
-                resultado.get("creadas", "?"),
-                resultado.get("omitidas", "?"),
-                resultado.get("errores", "?"),
-            )
+
+            if solo_preview:
+                logger.info(
+                    "Pagos huérfanos: %s | Estudiantes afectados: %s | Se crearán: %s",
+                    resultado.get("pagosHuerfanos", 0),
+                    resultado.get("estudiantesAfectados", 0),
+                    resultado.get("seCrearan", 0),
+                )
+                for item in resultado.get("detalle_crear", []):
+                    nueva = item.get("membresiaQueQuedara", {})
+                    logger.info(
+                        "CREAR | Estudiante %s (%s) | membresiaActual=%s | "
+                        "nuevaMembresia: %s → %s (%s mes(es), %s) | estadoQuedará=%s | origenFecha=%s",
+                        item.get("idEstudiante"),
+                        item.get("nombreEstudiante"),
+                        item.get("membresiaActual"),
+                        nueva.get("fechaInicio"),
+                        nueva.get("fechaFin"),
+                        nueva.get("meses"),
+                        nueva.get("estado"),
+                        item.get("estadoQueQuedara"),
+                        nueva.get("origenFechaInicio"),
+                    )
+            else:
+                logger.info(
+                    "pagosHuerfanos=%s estudiantesEvaluados=%s creadas=%s omitidas=%s errores=%s",
+                    resultado.get("pagosHuerfanos", "?"),
+                    resultado.get("estudiantesEvaluados", "?"),
+                    resultado.get("creadas", "?"),
+                    resultado.get("omitidas", "?"),
+                    resultado.get("errores", "?"),
+                )
+
             return {"statusCode": 200, "body": resultado}
 
     except urllib.error.HTTPError as e:

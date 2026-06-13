@@ -61,8 +61,6 @@ public class WompiService {
     private final ObjectMapper objectMapper;
     private final MembresiaCoreService membresiaCoreService;
 
-    @Value("${app.membresia.usar-core:false}")
-    private boolean usarMembresiaCore;
     
     /**
      * Genera la firma de integridad para el widget de Wompi
@@ -417,10 +415,16 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         Estudiante estudiante = pago.getEstudiante();
                         estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                         estudianteRepository.save(estudiante);
-                        activarMembresiaEstudiante(estudiante);
-                        log.info("✅ Estudiante {} actualizado a AL_DIA y membresía activada", estudiante.getIdEstudiante());
+                        try {
+                            membresiaCoreService.crearMembresiaParaPago(estudiante, pago, MembresiaCore.TipoMembresia.ONLINE);
+                        } catch (IllegalStateException ex) {
+                            log.info("MembresiaCore ya existente para pago sync {}", pago.getIdPago());
+                        } catch (Exception ex) {
+                            log.warn("MembresiaCore no actualizada para pago sync {}: {}", pago.getIdPago(), ex.getMessage());
+                        }
+                        log.info("✅ Estudiante {} actualizado a AL_DIA y membresía core activada", estudiante.getIdEstudiante());
                     }
-                    
+
                     pagoRepository.save(pago);
                     log.info("✅ Pago sincronizado correctamente - ID: {}", transactionId);
                     return true;
@@ -616,7 +620,13 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                                     Estudiante estudiante = pago.getEstudiante();
                                     estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                                     estudianteRepository.save(estudiante);
-                                    activarMembresiaEstudiante(estudiante);
+                                    try {
+                                        membresiaCoreService.crearMembresiaParaPago(estudiante, pago, MembresiaCore.TipoMembresia.ONLINE);
+                                    } catch (IllegalStateException ex) {
+                                        log.info("MembresiaCore ya existente para pago bulk {}", pago.getIdPago());
+                                    } catch (Exception ex) {
+                                        log.warn("MembresiaCore no actualizada para pago bulk {}: {}", pago.getIdPago(), ex.getMessage());
+                                    }
                                     detallePago.put("estudianteActualizado", true);
                                     detallePago.put("membresiaActivada", true);
                                 }
@@ -841,10 +851,6 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         estudianteRepository.save(estudiante);
                         actualizados++;
 
-                        if (estadoCorrecto == Estudiante.EstadoPago.AL_DIA) {
-                            activarMembresiaEstudiante(estudiante);
-                            detalle.put("membresiaActivada", true);
-                        }
 
                         detalle.put("accion", "ACTUALIZADO");
                         log.info("✅ Estudiante {} → {} -> {}",
@@ -1008,7 +1014,13 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                             Estudiante estudiante = pagoPendiente.getEstudiante();
                             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                             estudianteRepository.save(estudiante);
-                            activarMembresiaEstudiante(estudiante);
+                            try {
+                                membresiaCoreService.crearMembresiaParaPago(estudiante, pagoPendiente, MembresiaCore.TipoMembresia.ONLINE);
+                            } catch (IllegalStateException ex) {
+                                log.info("MembresiaCore ya existente para pago vinculado {}", pagoPendiente.getIdPago());
+                            } catch (Exception ex) {
+                                log.warn("MembresiaCore no actualizada para pago vinculado {}: {}", pagoPendiente.getIdPago(), ex.getMessage());
+                            }
                             detalle.put("estudianteActualizado", estudiante.getNombreCompleto());
                             detalle.put("membresiaActivada", true);
                         }
@@ -1193,19 +1205,16 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
 
                                 if (pago.getEstudiante() != null) {
                                     Estudiante est = pago.getEstudiante();
-                                    if (!usarMembresiaCore) {
-                                        est.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
-                                        estudianteRepository.save(est);
-                                    }
-                                    activarMembresiaEstudiante(est);
-                                    if (usarMembresiaCore) {
-                                        try {
-                                            membresiaCoreService.crearMembresiaParaPago(
-                                                    est, pago, MembresiaCore.TipoMembresia.ONLINE);
-                                        } catch (Exception ex) {
-                                            log.warn("MembresiaCore no actualizada para pago {}: {}",
-                                                    pago.getIdPago(), ex.getMessage());
-                                        }
+                                    est.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                                    estudianteRepository.save(est);
+                                    try {
+                                        membresiaCoreService.crearMembresiaParaPago(
+                                                est, pago, MembresiaCore.TipoMembresia.ONLINE);
+                                    } catch (IllegalStateException ex) {
+                                        log.info("MembresiaCore ya existente para pago {}", pago.getIdPago());
+                                    } catch (Exception ex) {
+                                        log.warn("MembresiaCore no actualizada para pago {}: {}",
+                                                pago.getIdPago(), ex.getMessage());
                                     }
                                     detalle.put("estudiante", est.getNombreCompleto());
                                     detalle.put("membresiaActivada", true);
@@ -1374,20 +1383,17 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             
             Pago pagoGuardado = pagoRepository.save(pago);
 
-            // Actualizar estudiante y activar membresía
-            if (!usarMembresiaCore) {
-                estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
-                estudianteRepository.save(estudiante);
-            }
-            activarMembresiaEstudiante(estudiante);
-            if (usarMembresiaCore) {
-                try {
-                    membresiaCoreService.crearMembresiaParaPago(
-                            estudiante, pagoGuardado, MembresiaCore.TipoMembresia.ONLINE);
-                } catch (Exception ex) {
-                    log.warn("MembresiaCore no actualizada para pago {}: {}",
-                            pagoGuardado.getIdPago(), ex.getMessage());
-                }
+            // Actualizar estudiante y crear membresía en membresia_core
+            estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+            estudianteRepository.save(estudiante);
+            try {
+                membresiaCoreService.crearMembresiaParaPago(
+                        estudiante, pagoGuardado, MembresiaCore.TipoMembresia.ONLINE);
+            } catch (IllegalStateException ex) {
+                log.info("MembresiaCore ya existente para pago {}", pagoGuardado.getIdPago());
+            } catch (Exception ex) {
+                log.warn("MembresiaCore no actualizada para pago {}: {}",
+                        pagoGuardado.getIdPago(), ex.getMessage());
             }
 
             log.info("✅ Pago creado desde transacción Wompi - ID: {}, Estudiante: {}, Membresía activada",
@@ -1475,15 +1481,14 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                                 Estudiante estudiante = pagoAprobado.getEstudiante();
                                 estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                                 estudianteRepository.save(estudiante);
-                                activarMembresiaEstudiante(estudiante);
-                                if (usarMembresiaCore) {
-                                    try {
-                                        membresiaCoreService.crearMembresiaParaPago(
-                                                estudiante, pagoAprobado, MembresiaCore.TipoMembresia.ONLINE);
-                                    } catch (Exception ex) {
-                                        log.warn("MembresiaCore no actualizada para pago webhook {}: {}",
-                                                pagoAprobado.getIdPago(), ex.getMessage());
-                                    }
+                                try {
+                                    membresiaCoreService.crearMembresiaParaPago(
+                                            estudiante, pagoAprobado, MembresiaCore.TipoMembresia.ONLINE);
+                                } catch (IllegalStateException ex) {
+                                    log.info("MembresiaCore ya existente para pago webhook {}", pagoAprobado.getIdPago());
+                                } catch (Exception ex) {
+                                    log.warn("MembresiaCore no actualizada para pago webhook {}: {}",
+                                            pagoAprobado.getIdPago(), ex.getMessage());
                                 }
                                 log.info("✅ Estudiante {} actualizado a AL_DIA y membresía core activada",
                                         estudiante.getIdEstudiante());
@@ -1777,11 +1782,17 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                         if (estudiante.getEstadoPago() != Estudiante.EstadoPago.AL_DIA) {
                             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                             estudianteRepository.save(estudiante);
-                            activarMembresiaEstudiante(estudiante);
                             estudianteActualizado = true;
-                            log.info("✅ Estudiante {} actualizado a AL_DIA y membresía activada", estudiante.getIdEstudiante());
+                            log.info("✅ Estudiante {} actualizado a AL_DIA", estudiante.getIdEstudiante());
                         }
-                        
+                        try {
+                            membresiaCoreService.crearMembresiaParaPago(estudiante, pago, MembresiaCore.TipoMembresia.ONLINE);
+                        } catch (IllegalStateException ex) {
+                            log.info("MembresiaCore ya existente para confirmacion pago {}", pago.getIdPago());
+                        } catch (Exception ex) {
+                            log.warn("MembresiaCore no actualizada para confirmacion {}: {}", pago.getIdPago(), ex.getMessage());
+                        }
+
                         responseBuilder
                                 .idEstudiante(estudiante.getIdEstudiante())
                                 .nombreEstudiante(estudiante.getNombreCompleto())
@@ -2056,12 +2067,18 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             
             Pago pagoGuardado = pagoRepository.save(pago);
             
-            // Actualizar estudiante y activar membresía
+            // Actualizar estudiante y crear membresía en membresia_core
             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
             estudianteRepository.save(estudiante);
-            activarMembresiaEstudiante(estudiante);
-            
-            log.info("✅ Pago creado automáticamente - ID: {}, Estudiante: {}, Referencia: {}, Membresía activada", 
+            try {
+                membresiaCoreService.crearMembresiaParaPago(estudiante, pagoGuardado, MembresiaCore.TipoMembresia.ONLINE);
+            } catch (IllegalStateException ex) {
+                log.info("MembresiaCore ya existente para pago desde referencia {}", pagoGuardado.getIdPago());
+            } catch (Exception ex) {
+                log.warn("MembresiaCore no actualizada para pago desde referencia {}: {}", pagoGuardado.getIdPago(), ex.getMessage());
+            }
+
+            log.info("✅ Pago creado automáticamente - ID: {}, Estudiante: {}, Referencia: {}, Membresía activada",
                     pagoGuardado.getIdPago(), idEstudiante, reference);
             
             return pagoGuardado;
@@ -2171,14 +2188,20 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             
             Pago pagoGuardado = pagoRepository.save(pago);
             
-            // Actualizar estado del estudiante a AL_DIA y activar membresía
+            // Actualizar estado del estudiante a AL_DIA
             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
             estudianteRepository.save(estudiante);
-            activarMembresiaEstudiante(estudiante);
-            
-            log.info("✅ Pago creado automáticamente desde webhook - ID Pago: {}, Estudiante: {} ({}), Monto: {}, Mes: {}, Membresía activada", 
-                pagoGuardado.getIdPago(), 
-                estudiante.getIdEstudiante(), 
+            try {
+                membresiaCoreService.crearMembresiaParaPago(estudiante, pagoGuardado, MembresiaCore.TipoMembresia.ONLINE);
+            } catch (IllegalStateException ex) {
+                log.info("MembresiaCore ya existente para pago webhook fallback {}", pagoGuardado.getIdPago());
+            } catch (Exception ex) {
+                log.warn("MembresiaCore no actualizada para pago webhook fallback {}: {}", pagoGuardado.getIdPago(), ex.getMessage());
+            }
+
+            log.info("✅ Pago creado automáticamente desde webhook - ID Pago: {}, Estudiante: {} ({}), Monto: {}, Mes: {}",
+                pagoGuardado.getIdPago(),
+                estudiante.getIdEstudiante(),
                 estudiante.getNombreCompleto(),
                 monto,
                 mesPagado);
