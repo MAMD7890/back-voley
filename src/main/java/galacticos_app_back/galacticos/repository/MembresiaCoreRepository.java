@@ -158,4 +158,8 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
            "AND ((m.tipoMembresia = 'EFECTIVO' AND m.pagoOrigen.metodoPago = 'ONLINE') " +
            "  OR (m.tipoMembresia = 'ONLINE'   AND m.pagoOrigen.metodoPago = 'EFECTIVO'))")
     List<MembresiaCore> findConTipoIncorrecto();
+
+    // Elegibilidad asistencia: tiene al menos una membresía con fechaFin dentro de los últimos 2 meses
+    @Query("SELECT COUNT(m) FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante AND m.fechaFin >= :corte")
+    long countMembresiasRecientes(@Param("idEstudiante") Integer idEstudiante, @Param("corte") LocalDate corte);
 }

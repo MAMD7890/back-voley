@@ -3,6 +3,7 @@ package galacticos_app_back.galacticos.controller;
 import galacticos_app_back.galacticos.dto.MembresiaCoreDTO;
 import galacticos_app_back.galacticos.entity.Pago;
 import galacticos_app_back.galacticos.service.MembresiaCoreService;
+import galacticos_app_back.galacticos.service.SesionAsistenciaService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -18,6 +19,9 @@ public class MembresiaCoreController {
 
     @Autowired
     private MembresiaCoreService membresiaCoreService;
+
+    @Autowired
+    private SesionAsistenciaService sesionAsistenciaService;
 
     @Value("${app.internal.api-key:#{null}}")
     private String internalApiKey;
@@ -150,6 +154,27 @@ public class MembresiaCoreController {
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
         if (!validarApiKey(apiKey)) return unauthorized();
         return ResponseEntity.ok(membresiaCoreService.migrarMembresiasExistentes());
+    }
+
+    @PostMapping("/api/internal/asistencia/jobs/migrar-legado")
+    public ResponseEntity<Map<String, Object>> migrarAsistenciasLegado(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(sesionAsistenciaService.migrarAsistenciasLegado());
+    }
+
+    @PostMapping("/api/internal/asistencia/jobs/limpiar-inelegibles")
+    public ResponseEntity<Map<String, Object>> limpiarAsistenciasInelegibles(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(sesionAsistenciaService.limpiarAsistenciasInelegibles());
+    }
+
+    @PostMapping("/api/internal/asistencia/jobs/deduplicar-sesiones")
+    public ResponseEntity<Map<String, Object>> deduplicarSesiones(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(sesionAsistenciaService.deduplicarSesiones());
     }
 
     // ─── Pagos del estudiante ─────────────────────────────────────────────────

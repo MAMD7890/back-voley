@@ -22,6 +22,9 @@ public interface SesionAsistenciaRepository extends JpaRepository<SesionAsistenc
     List<SesionAsistencia> findBySedeIdSedeAndFechaBetweenOrderByFechaDesc(
             Integer idSede, LocalDate desde, LocalDate hasta);
 
+    @Query("SELECT s FROM SesionAsistencia s WHERE s.equipo IS NULL ORDER BY s.sede.idSede ASC, s.fecha ASC, s.idSesion ASC")
+    List<SesionAsistencia> findAllSinEquipoOrdenadas();
+
     @Query("SELECT COUNT(DISTINCT s.fecha) FROM SesionAsistencia s " +
            "WHERE s.sede.idSede = :idSede " +
            "AND (:desde IS NULL OR s.fecha >= :desde) " +

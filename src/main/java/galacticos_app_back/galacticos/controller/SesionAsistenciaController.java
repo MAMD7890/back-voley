@@ -1,10 +1,14 @@
 package galacticos_app_back.galacticos.controller;
 
+import galacticos_app_back.galacticos.dto.asistencia.EstudianteAsistenciaDiaDTO;
 import galacticos_app_back.galacticos.dto.asistencia.ReporteAsistenciaDTO;
 import galacticos_app_back.galacticos.dto.asistencia.SesionAsistenciaRequestDTO;
+import galacticos_app_back.galacticos.entity.Estudiante;
 import galacticos_app_back.galacticos.service.SesionAsistenciaService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,6 +22,24 @@ public class SesionAsistenciaController {
 
     @Autowired
     private SesionAsistenciaService sesionAsistenciaService;
+
+    @Value("${app.internal.api-key:#{null}}")
+    private String internalApiKey;
+
+    // ─── Migración legado → v2 (interno) ─────────────────────────────────────
+
+
+    // ─── Estudiantes con asistencia para un día ───────────────────────────────
+
+    @GetMapping("/sesiones-asistencia/estudiantes")
+    public ResponseEntity<List<EstudianteAsistenciaDiaDTO>> obtenerEstudiantesConAsistencia(
+            @RequestParam Integer idSede,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(required = false) String busqueda,
+            @RequestParam(required = false) Estudiante.EstadoPago estadoPago) {
+        return ResponseEntity.ok(
+                sesionAsistenciaService.obtenerEstudiantesConAsistencia(idSede, fecha, busqueda, estadoPago));
+    }
 
     // ─── Guardar sesión de asistencia ────────────────────────────────────────
 
@@ -41,22 +63,26 @@ public class SesionAsistenciaController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             @RequestParam(required = false) Integer idSede,
             @RequestParam(required = false) String busqueda,
-            @RequestParam(required = false) Boolean asistio) {
+            @RequestParam(required = false) Boolean asistio,
+            @RequestParam(required = false) Estudiante.EstadoPago estadoPago) {
         return ResponseEntity.ok(
-                sesionAsistenciaService.obtenerStats(desde, hasta, idSede, busqueda, asistio));
+                sesionAsistenciaService.obtenerStats(desde, hasta, idSede, busqueda, asistio, estadoPago));
     }
 
     // ─── Reporte: vista detalle (lista individual) ───────────────────────────
 
     @GetMapping("/asistencia/reporte/detalle")
-    public ResponseEntity<List<ReporteAsistenciaDTO.DetalleRegistro>> obtenerDetalle(
+    public ResponseEntity<Map<String, Object>> obtenerDetalle(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             @RequestParam(required = false) Integer idSede,
             @RequestParam(required = false) String busqueda,
-            @RequestParam(required = false) Boolean asistio) {
+            @RequestParam(required = false) Boolean asistio,
+            @RequestParam(required = false) Estudiante.EstadoPago estadoPago,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "100") int size) {
         return ResponseEntity.ok(
-                sesionAsistenciaService.obtenerDetalle(desde, hasta, idSede, busqueda, asistio));
+                sesionAsistenciaService.obtenerDetalle(desde, hasta, idSede, busqueda, asistio, estadoPago, page, size));
     }
 
     // ─── Reporte: vista resumen (agrupado por estudiante) ────────────────────
@@ -67,9 +93,10 @@ public class SesionAsistenciaController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             @RequestParam(required = false) Integer idSede,
             @RequestParam(required = false) String busqueda,
-            @RequestParam(required = false) Boolean asistio) {
+            @RequestParam(required = false) Boolean asistio,
+            @RequestParam(required = false) Estudiante.EstadoPago estadoPago) {
         return ResponseEntity.ok(
-                sesionAsistenciaService.obtenerResumen(desde, hasta, idSede, busqueda, asistio));
+                sesionAsistenciaService.obtenerResumen(desde, hasta, idSede, busqueda, asistio, estadoPago));
     }
 
     // ─── Detalle de un estudiante específico ─────────────────────────────────
@@ -82,5 +109,17 @@ public class SesionAsistenciaController {
         } catch (RuntimeException e) {
             return ResponseEntity.notFound().build();
         }
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    private boolean validarApiKey(String apiKey) {
+        if (internalApiKey == null || internalApiKey.isBlank()) return true;
+        return internalApiKey.equals(apiKey);
+    }
+
+    private ResponseEntity<Map<String, Object>> unauthorized() {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("error", "API Key inválida o ausente"));
     }
 }
