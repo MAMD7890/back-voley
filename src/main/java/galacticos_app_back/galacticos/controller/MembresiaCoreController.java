@@ -42,6 +42,13 @@ public class MembresiaCoreController {
 
     // ─── Endpoints internos (protegidos por API Key) ──────────────────────────
 
+    @GetMapping("/api/internal/membresias-core/jobs/activar-periodos/preview")
+    public ResponseEntity<Map<String, Object>> previewJob1ActivarPeriodos(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.previsualizarJob1ActivarPeriodos());
+    }
+
     @PostMapping("/api/internal/membresias-core/jobs/activar-periodos")
     public ResponseEntity<Map<String, Object>> job1ActivarPeriodos(
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {

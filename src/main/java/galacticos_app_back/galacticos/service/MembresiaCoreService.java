@@ -741,6 +741,58 @@ public class MembresiaCoreService {
 
     // ─── Job 1 — Activar períodos futuros ────────────────────────────────────
 
+    @Transactional(readOnly = true)
+    public Map<String, Object> previsualizarJob1ActivarPeriodos() {
+        LocalDate hoy = hoy();
+
+        List<MembresiaCore> iniciandoHoy    = membresiaCoreRepository.findPagadasQueInicianHoy(hoy);
+        List<MembresiaCore> vigentesNoActivas = membresiaCoreRepository.findPagadasVigentesNoActivas(hoy);
+
+        Map<Integer, MembresiaCore> candidatas = new LinkedHashMap<>();
+        iniciandoHoy.forEach(m      -> candidatas.put(m.getIdMembresiaCore(), m));
+        vigentesNoActivas.forEach(m -> candidatas.putIfAbsent(m.getIdMembresiaCore(), m));
+
+        List<Map<String, Object>> detalle = new ArrayList<>();
+        for (MembresiaCore mc : candidatas.values()) {
+            boolean esRecuperacion = !iniciandoHoy.contains(mc);
+
+            boolean hayOtraActiva = membresiaCoreRepository
+                    .findActivas(mc.getEstudiante().getIdEstudiante()).stream()
+                    .anyMatch(a -> !a.getIdMembresiaCore().equals(mc.getIdMembresiaCore())
+                            && a.getFechaFin() != null && a.getFechaFin().isAfter(mc.getFechaFin()));
+            if (hayOtraActiva) continue;
+
+            List<MembresiaCore> anteriores = membresiaCoreRepository
+                    .findPagadasVencidasDeEstudiante(mc.getEstudiante().getIdEstudiante(), hoy);
+            MembresiaCore anterior = anteriores.stream()
+                    .filter(a -> !a.getIdMembresiaCore().equals(mc.getIdMembresiaCore()))
+                    .findFirst().orElse(null);
+
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("idEstudiante",       mc.getEstudiante().getIdEstudiante());
+            item.put("nombreEstudiante",   mc.getEstudiante().getNombreCompleto());
+            item.put("idMembresiaCore",    mc.getIdMembresiaCore());
+            item.put("fechaInicio",        mc.getFechaInicio());
+            item.put("fechaFin",           mc.getFechaFin());
+            item.put("tipo",               esRecuperacion ? "REACTIVACION" : "ACTIVACION_HOY");
+            if (anterior != null) {
+                item.put("finalizara", Map.of(
+                        "idMembresiaCore", anterior.getIdMembresiaCore(),
+                        "fechaFin",        anterior.getFechaFin()
+                ));
+            }
+            detalle.add(item);
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("fecha",              hoy.toString());
+        resultado.put("totalActivaciones",  detalle.stream().filter(d -> "ACTIVACION_HOY".equals(d.get("tipo"))).count());
+        resultado.put("totalReactivaciones",detalle.stream().filter(d -> "REACTIVACION".equals(d.get("tipo"))).count());
+        resultado.put("totalProcesara",     detalle.size());
+        resultado.put("detalle",            detalle);
+        return resultado;
+    }
+
     @Transactional
     public Map<String, Object> ejecutarJob1ActivarPeriodosFuturos() {
         LocalDate hoy = hoy();
