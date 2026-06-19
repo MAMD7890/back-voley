@@ -744,15 +744,32 @@ public class MembresiaCoreService {
     @Transactional
     public Map<String, Object> ejecutarJob1ActivarPeriodosFuturos() {
         LocalDate hoy = hoy();
+
+        // Fase 1: membresías que inician hoy
         List<MembresiaCore> iniciandoHoy = membresiaCoreRepository.findPagadasQueInicianHoy(hoy);
+        // Fase 2: membresías PAGADA vigentes hoy que por algún fallo nunca se activaron
+        List<MembresiaCore> vigentesNoActivas = membresiaCoreRepository.findPagadasVigentesNoActivas(hoy);
 
-        int activadas = 0;
-        int errores = 0;
+        // Unir ambas listas evitando duplicados
+        Map<Integer, MembresiaCore> candidatas = new LinkedHashMap<>();
+        iniciandoHoy.forEach(m -> candidatas.put(m.getIdMembresiaCore(), m));
+        vigentesNoActivas.forEach(m -> candidatas.putIfAbsent(m.getIdMembresiaCore(), m));
 
-        for (MembresiaCore mc : iniciandoHoy) {
+        int activadas = 0, reactivadas = 0, errores = 0;
+
+        for (MembresiaCore mc : candidatas.values()) {
+            boolean esFaseRecuperacion = !iniciandoHoy.contains(mc);
             try {
                 Integer idEstudiante = mc.getEstudiante().getIdEstudiante();
-                // Marcar membresía anterior como FINALIZADA
+
+                // Si ya hay otra membresía activa más reciente para este estudiante, no tocar
+                boolean hayOtraActiva = membresiaCoreRepository
+                        .findActivas(idEstudiante).stream()
+                        .anyMatch(a -> !a.getIdMembresiaCore().equals(mc.getIdMembresiaCore())
+                                && a.getFechaFin() != null && a.getFechaFin().isAfter(mc.getFechaFin()));
+                if (hayOtraActiva) continue;
+
+                // Finalizar membresías anteriores vencidas
                 List<MembresiaCore> anteriores = membresiaCoreRepository
                         .findPagadasVencidasDeEstudiante(idEstudiante, hoy);
                 for (MembresiaCore anterior : anteriores) {
@@ -773,7 +790,8 @@ public class MembresiaCoreService {
                 Estudiante estudiante = mc.getEstudiante();
                 estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
                 estudianteRepository.save(estudiante);
-                activadas++;
+
+                if (esFaseRecuperacion) reactivadas++; else activadas++;
             } catch (Exception e) {
                 errores++;
             }
@@ -782,8 +800,9 @@ public class MembresiaCoreService {
         Map<String, Object> resultado = new LinkedHashMap<>();
         resultado.put("job", "ActivarPeriodosFuturos");
         resultado.put("fecha", hoy.toString());
-        resultado.put("procesadas", iniciandoHoy.size());
+        resultado.put("procesadas", candidatas.size());
         resultado.put("activadas", activadas);
+        resultado.put("reactivadas", reactivadas);
         resultado.put("errores", errores);
         return resultado;
     }

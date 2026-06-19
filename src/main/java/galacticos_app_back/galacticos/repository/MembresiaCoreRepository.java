@@ -162,4 +162,11 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
     // Elegibilidad asistencia: tiene al menos una membresía con fechaFin dentro de los últimos 2 meses
     @Query("SELECT COUNT(m) FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante AND m.fechaFin >= :corte")
     long countMembresiasRecientes(@Param("idEstudiante") Integer idEstudiante, @Param("corte") LocalDate corte);
+
+    // Job 1 extendido: PAGADA vigente hoy pero que nunca se activó (Job 1 la perdió en su día)
+    @Query("SELECT m FROM MembresiaCore m WHERE m.estadoMembresia = 'PAGADA' " +
+           "AND m.esActiva = false " +
+           "AND m.fechaInicio <= :hoy " +
+           "AND m.fechaFin > :hoy")
+    List<MembresiaCore> findPagadasVigentesNoActivas(@Param("hoy") LocalDate hoy);
 }
