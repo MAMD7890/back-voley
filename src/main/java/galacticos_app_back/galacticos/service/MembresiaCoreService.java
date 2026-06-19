@@ -745,22 +745,24 @@ public class MembresiaCoreService {
     public Map<String, Object> previsualizarJob1ActivarPeriodos() {
         LocalDate hoy = hoy();
 
-        List<MembresiaCore> iniciandoHoy    = membresiaCoreRepository.findPagadasQueInicianHoy(hoy);
-        List<MembresiaCore> vigentesNoActivas = membresiaCoreRepository.findPagadasVigentesNoActivas(hoy);
+        List<MembresiaCore> iniciandoHoy         = membresiaCoreRepository.findPagadasQueInicianHoy(hoy);
+        List<MembresiaCore> vigentesNoActivas     = membresiaCoreRepository.findPagadasVigentesNoActivas(hoy);
+        List<MembresiaCore> anticipadasActivables = membresiaCoreRepository.findPagadasFuturasActivables(hoy);
 
         Map<Integer, MembresiaCore> candidatas = new LinkedHashMap<>();
-        iniciandoHoy.forEach(m      -> candidatas.put(m.getIdMembresiaCore(), m));
-        vigentesNoActivas.forEach(m -> candidatas.putIfAbsent(m.getIdMembresiaCore(), m));
+        iniciandoHoy.forEach(m          -> candidatas.put(m.getIdMembresiaCore(), m));
+        vigentesNoActivas.forEach(m     -> candidatas.putIfAbsent(m.getIdMembresiaCore(), m));
+        anticipadasActivables.forEach(m -> candidatas.putIfAbsent(m.getIdMembresiaCore(), m));
 
         List<Map<String, Object>> detalle = new ArrayList<>();
         for (MembresiaCore mc : candidatas.values()) {
             boolean esRecuperacion = !iniciandoHoy.contains(mc);
 
-            // Saltar si ya hay una membresía activa que aún no ha vencido
+            // Saltar si ya hay una membresía activa que vence después de hoy (no la que vence hoy)
             boolean hayActivaVigente = membresiaCoreRepository
                     .findActivas(mc.getEstudiante().getIdEstudiante()).stream()
                     .anyMatch(a -> !a.getIdMembresiaCore().equals(mc.getIdMembresiaCore())
-                            && a.getFechaFin() != null && !a.getFechaFin().isBefore(hoy));
+                            && a.getFechaFin() != null && a.getFechaFin().isAfter(hoy));
             if (hayActivaVigente) continue;
 
             List<MembresiaCore> anteriores = membresiaCoreRepository
@@ -802,11 +804,14 @@ public class MembresiaCoreService {
         List<MembresiaCore> iniciandoHoy = membresiaCoreRepository.findPagadasQueInicianHoy(hoy);
         // Fase 2: membresías PAGADA vigentes hoy que por algún fallo nunca se activaron
         List<MembresiaCore> vigentesNoActivas = membresiaCoreRepository.findPagadasVigentesNoActivas(hoy);
+        // Fase 3: pagos anticipados (fechaInicio futura) cuya membresía activa venció hoy o antes
+        List<MembresiaCore> anticipadasActivables = membresiaCoreRepository.findPagadasFuturasActivables(hoy);
 
-        // Unir ambas listas evitando duplicados
+        // Unir todas las listas evitando duplicados (fase 1 tiene prioridad)
         Map<Integer, MembresiaCore> candidatas = new LinkedHashMap<>();
         iniciandoHoy.forEach(m -> candidatas.put(m.getIdMembresiaCore(), m));
         vigentesNoActivas.forEach(m -> candidatas.putIfAbsent(m.getIdMembresiaCore(), m));
+        anticipadasActivables.forEach(m -> candidatas.putIfAbsent(m.getIdMembresiaCore(), m));
 
         int activadas = 0, reactivadas = 0, errores = 0;
 
@@ -819,7 +824,7 @@ public class MembresiaCoreService {
                 boolean hayActivaVigente = membresiaCoreRepository
                         .findActivas(idEstudiante).stream()
                         .anyMatch(a -> !a.getIdMembresiaCore().equals(mc.getIdMembresiaCore())
-                                && a.getFechaFin() != null && !a.getFechaFin().isBefore(hoy));
+                                && a.getFechaFin() != null && a.getFechaFin().isAfter(hoy));
                 if (hayActivaVigente) continue;
 
                 // Finalizar membresías anteriores vencidas
@@ -912,12 +917,33 @@ public class MembresiaCoreService {
             }
         }
 
+        // Fase 2: FINALIZADA esActiva=true (creadas así directamente) con estudiante aún AL_DIA
+        List<MembresiaCore> finalizadasAlDia = membresiaCoreRepository
+                .findFinalizadasActivasConEstudianteAlDia(hoy);
+        int corregidas = 0;
+        for (MembresiaCore mc : finalizadasAlDia) {
+            try {
+                // Solo mover a mora si no tiene membresía PAGADA futura (pago anticipado)
+                long futuras = membresiaCoreRepository.countMembresiasPagadasFuturas(
+                        mc.getEstudiante().getIdEstudiante(), hoy);
+                if (futuras > 0) continue;
+
+                Estudiante estudiante = mc.getEstudiante();
+                estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                estudianteRepository.save(estudiante);
+                corregidas++;
+            } catch (Exception e) {
+                errores++;
+            }
+        }
+
         Map<String, Object> resultado = new LinkedHashMap<>();
         resultado.put("job", "DetectarVencimientos");
         resultado.put("fecha", hoy.toString());
         resultado.put("evaluadas", vencidas.size());
         resultado.put("finalizadasActivas", procesadas);
         resultado.put("omitidas", omitidas);
+        resultado.put("corregidas", corregidas);
         resultado.put("errores", errores);
         return resultado;
     }

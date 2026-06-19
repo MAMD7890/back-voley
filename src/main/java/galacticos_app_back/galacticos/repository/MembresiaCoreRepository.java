@@ -40,8 +40,8 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
             @Param("idEstudiante") Integer idEstudiante,
             @Param("hoy") LocalDate hoy);
 
-    // Job 2 — membresías PAGADA con fechaFin < hoy
-    @Query("SELECT m FROM MembresiaCore m WHERE m.estadoMembresia = 'PAGADA' AND m.fechaFin < :hoy")
+    // Job 2 — membresías PAGADA con fechaFin <= hoy (el día de vencimiento ya es día vencido)
+    @Query("SELECT m FROM MembresiaCore m WHERE m.estadoMembresia = 'PAGADA' AND m.fechaFin <= :hoy")
     List<MembresiaCore> findPagadasVencidas(@Param("hoy") LocalDate hoy);
 
     // Job 2 — verificar si el estudiante tiene otra membresía activa o en mora
@@ -158,6 +158,31 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
            "AND ((m.tipoMembresia = 'EFECTIVO' AND m.pagoOrigen.metodoPago = 'ONLINE') " +
            "  OR (m.tipoMembresia = 'ONLINE'   AND m.pagoOrigen.metodoPago = 'EFECTIVO'))")
     List<MembresiaCore> findConTipoIncorrecto();
+
+    // Job 2 extendido: FINALIZADA esActiva=true cuyo fechaFin <= hoy y estudiante sigue AL_DIA
+    @Query("SELECT m FROM MembresiaCore m WHERE m.estadoMembresia = 'FINALIZADA' " +
+           "AND m.esActiva = true " +
+           "AND m.fechaFin <= :hoy " +
+           "AND m.estudiante.estadoPago = 'AL_DIA' " +
+           "AND m.estudiante.estado = true")
+    List<MembresiaCore> findFinalizadasActivasConEstudianteAlDia(@Param("hoy") LocalDate hoy);
+
+    // Pagos anticipados: PAGADA con fechaFin estrictamente después de hoy (membresía futura real)
+    @Query("SELECT COUNT(m) FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante " +
+           "AND m.estadoMembresia = 'PAGADA' AND m.fechaFin > :hoy")
+    long countMembresiasPagadasFuturas(@Param("idEstudiante") Integer idEstudiante, @Param("hoy") LocalDate hoy);
+
+    // Job 1 fase 3: pagos anticipados (fechaInicio > hoy) cuya membresía activa ya venció hoy o antes
+    @Query("SELECT m FROM MembresiaCore m WHERE m.estadoMembresia = 'PAGADA' " +
+           "AND m.esActiva = false " +
+           "AND m.fechaInicio > :hoy " +
+           "AND NOT EXISTS (" +
+           "  SELECT a FROM MembresiaCore a " +
+           "  WHERE a.estudiante = m.estudiante " +
+           "  AND a.estadoMembresia = 'PAGADA' " +
+           "  AND a.esActiva = true " +
+           "  AND a.fechaFin > :hoy)")
+    List<MembresiaCore> findPagadasFuturasActivables(@Param("hoy") LocalDate hoy);
 
     // Elegibilidad asistencia: tiene al menos una membresía con fechaFin dentro de los últimos 2 meses
     @Query("SELECT COUNT(m) FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante AND m.fechaFin >= :corte")
