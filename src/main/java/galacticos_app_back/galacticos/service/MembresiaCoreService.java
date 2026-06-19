@@ -756,11 +756,12 @@ public class MembresiaCoreService {
         for (MembresiaCore mc : candidatas.values()) {
             boolean esRecuperacion = !iniciandoHoy.contains(mc);
 
-            boolean hayOtraActiva = membresiaCoreRepository
+            // Saltar si ya hay una membresía activa que aún no ha vencido
+            boolean hayActivaVigente = membresiaCoreRepository
                     .findActivas(mc.getEstudiante().getIdEstudiante()).stream()
                     .anyMatch(a -> !a.getIdMembresiaCore().equals(mc.getIdMembresiaCore())
-                            && a.getFechaFin() != null && a.getFechaFin().isAfter(mc.getFechaFin()));
-            if (hayOtraActiva) continue;
+                            && a.getFechaFin() != null && !a.getFechaFin().isBefore(hoy));
+            if (hayActivaVigente) continue;
 
             List<MembresiaCore> anteriores = membresiaCoreRepository
                     .findPagadasVencidasDeEstudiante(mc.getEstudiante().getIdEstudiante(), hoy);
@@ -814,12 +815,12 @@ public class MembresiaCoreService {
             try {
                 Integer idEstudiante = mc.getEstudiante().getIdEstudiante();
 
-                // Si ya hay otra membresía activa más reciente para este estudiante, no tocar
-                boolean hayOtraActiva = membresiaCoreRepository
+                // Saltar si ya hay una membresía activa que aún no ha vencido
+                boolean hayActivaVigente = membresiaCoreRepository
                         .findActivas(idEstudiante).stream()
                         .anyMatch(a -> !a.getIdMembresiaCore().equals(mc.getIdMembresiaCore())
-                                && a.getFechaFin() != null && a.getFechaFin().isAfter(mc.getFechaFin()));
-                if (hayOtraActiva) continue;
+                                && a.getFechaFin() != null && !a.getFechaFin().isBefore(hoy));
+                if (hayActivaVigente) continue;
 
                 // Finalizar membresías anteriores vencidas
                 List<MembresiaCore> anteriores = membresiaCoreRepository
