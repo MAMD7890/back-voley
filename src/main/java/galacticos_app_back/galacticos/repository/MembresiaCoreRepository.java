@@ -184,6 +184,15 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
            "  AND a.fechaFin > :hoy)")
     List<MembresiaCore> findPagadasFuturasActivables(@Param("hoy") LocalDate hoy);
 
+    // Corrección duración online: membresías con pago vinculado ordenadas por estudiante y fecha
+    @Query("SELECT m FROM MembresiaCore m " +
+           "WHERE m.pagoOrigen IS NOT NULL " +
+           "AND m.pagoOrigen.metodoPago = 'ONLINE' " +
+           "AND m.estadoMembresia IN ('PAGADA', 'FINALIZADA') " +
+           "AND m.fechaInicio IS NOT NULL AND m.fechaFin IS NOT NULL " +
+           "ORDER BY m.estudiante.idEstudiante ASC, m.fechaInicio ASC")
+    List<MembresiaCore> findOnlineConPagoOrigenOrdenadas();
+
     // Elegibilidad asistencia: tiene al menos una membresía con fechaFin dentro de los últimos 2 meses
     @Query("SELECT COUNT(m) FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante AND m.fechaFin >= :corte")
     long countMembresiasRecientes(@Param("idEstudiante") Integer idEstudiante, @Param("corte") LocalDate corte);

@@ -3,6 +3,7 @@ package galacticos_app_back.galacticos.repository;
 import galacticos_app_back.galacticos.entity.Plan;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -23,4 +24,9 @@ public interface PlanRepository extends JpaRepository<Plan, Integer> {
      * Obtener planes por duración
      */
     List<Plan> findByDuracionMeses(Integer duracionMeses);
+
+    /**
+     * Buscar plan por precio de matrícula (para determinar duración de pagos online)
+     */
+    Optional<Plan> findByPrecioMatricula(BigDecimal precioMatricula);
 }

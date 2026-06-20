@@ -10,6 +10,7 @@ import galacticos_app_back.galacticos.repository.EstudianteRepository;
 import galacticos_app_back.galacticos.repository.MembresiaCoreRepository;
 import galacticos_app_back.galacticos.repository.MembresiaRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
+import galacticos_app_back.galacticos.repository.PlanRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +36,9 @@ public class MembresiaCoreService {
 
     @Autowired
     private PagoRepository pagoRepository;
+
+    @Autowired
+    private PlanRepository planRepository;
 
     private static final ZoneId BOGOTA = ZoneId.of("America/Bogota");
 
@@ -1795,11 +1799,15 @@ public class MembresiaCoreService {
             seCreara.add(item);
         }
 
+        List<Map<String, Object>> corregir = calcularCorreccionesDuracion(hoy);
+
         Map<String, Object> resultado = new LinkedHashMap<>();
-        resultado.put("pagosHuerfanos",       huerfanos.size());
-        resultado.put("estudiantesAfectados", porEstudiante.size());
-        resultado.put("seCrearan",            seCreara.size());
-        resultado.put("detalle_crear",        seCreara);
+        resultado.put("pagosHuerfanos",           huerfanos.size());
+        resultado.put("estudiantesAfectados",     porEstudiante.size());
+        resultado.put("seCrearan",                seCreara.size());
+        resultado.put("detalle_crear",            seCreara);
+        resultado.put("duracionesIncorrectas",    corregir.size());
+        resultado.put("detalle_corregir",         corregir);
         return resultado;
     }
 
@@ -1829,14 +1837,140 @@ public class MembresiaCoreService {
             }
         }
 
+        // Fase 2: corregir duraciones incorrectas en membresías ONLINE existentes
+        LocalDate hoy = hoy();
+        List<Map<String, Object>> correciones = calcularCorreccionesDuracion(hoy);
+        int corregidas = 0;
+        int erroresCorreccion = 0;
+
+        for (Map<String, Object> estudianteInfo : correciones) {
+            try {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> cambios = (List<Map<String, Object>>) estudianteInfo.get("cambios");
+                for (Map<String, Object> cambio : cambios) {
+                    Integer idMc = (Integer) cambio.get("idMembresiaCore");
+                    LocalDate nuevoInicio = (LocalDate) cambio.get("fechaInicioCorregida");
+                    LocalDate nuevoFin    = (LocalDate) cambio.get("fechaFinCorregida");
+
+                    membresiaCoreRepository.findById(idMc).ifPresent(mc -> {
+                        mc.setFechaInicio(nuevoInicio);
+                        mc.setFechaFin(nuevoFin);
+                        // Si la nueva fechaFin es futura y estaba FINALIZADA → volver a PAGADA
+                        if (mc.getEstadoMembresia() == EstadoMembresia.FINALIZADA
+                                && nuevoFin.isAfter(hoy)) {
+                            mc.setEstadoMembresia(EstadoMembresia.PAGADA);
+                        }
+                        mc.setMotivoCambio("CORRECCION_DURACION_ONLINE");
+                        mc.setFechaUltimoCambio(ahora());
+                        membresiaCoreRepository.save(mc);
+                    });
+                    corregidas++;
+                }
+
+                // Actualizar estado del estudiante según lo que quedará
+                String estadoQueQuedara = (String) estudianteInfo.get("estadoQueQuedara");
+                Integer idEst = (Integer) estudianteInfo.get("idEstudiante");
+                estudianteRepository.findById(idEst).ifPresent(est -> {
+                    Estudiante.EstadoPago nuevo = "AL_DIA".equals(estadoQueQuedara)
+                            ? Estudiante.EstadoPago.AL_DIA
+                            : Estudiante.EstadoPago.EN_MORA;
+                    est.setEstadoPago(nuevo);
+                    estudianteRepository.save(est);
+                });
+            } catch (Exception e) {
+                erroresCorreccion++;
+            }
+        }
+
         Map<String, Object> resultado = new LinkedHashMap<>();
-        resultado.put("job", "RecuperarMembresiasFaltantes");
-        resultado.put("fecha", hoy().toString());
-        resultado.put("pagosHuerfanos", huerfanos.size());
+        resultado.put("job",                  "RecuperarMembresiasFaltantes");
+        resultado.put("fecha",                hoy.toString());
+        resultado.put("pagosHuerfanos",       huerfanos.size());
         resultado.put("estudiantesEvaluados", porEstudiante.size());
-        resultado.put("creadas", creadas);
-        resultado.put("omitidas", omitidas);
-        resultado.put("errores", errores);
+        resultado.put("creadas",              creadas);
+        resultado.put("omitidas",             omitidas);
+        resultado.put("errores",              errores);
+        resultado.put("duracionesCorregidas", corregidas);
+        resultado.put("erroresCorreccion",    erroresCorreccion);
+        return resultado;
+    }
+
+    // ─── Helper: correcciones de duración para membresías online ─────────────
+
+    private List<Map<String, Object>> calcularCorreccionesDuracion(LocalDate hoy) {
+        // Mapa precioMatricula → duracionMeses desde la tabla de planes
+        Map<BigDecimal, Integer> duracionPorPrecio = new HashMap<>();
+        for (Plan plan : planRepository.findAll()) {
+            if (plan.getPrecioMatricula() != null && plan.getDuracionMeses() != null) {
+                duracionPorPrecio.put(plan.getPrecioMatricula(), plan.getDuracionMeses());
+            }
+        }
+
+        // Membresías ONLINE con pago vinculado, ordenadas por estudiante + fechaInicio
+        List<MembresiaCore> todas = membresiaCoreRepository.findOnlineConPagoOrigenOrdenadas();
+
+        // Agrupar por estudiante
+        Map<Integer, List<MembresiaCore>> porEstudiante = new LinkedHashMap<>();
+        for (MembresiaCore mc : todas) {
+            porEstudiante.computeIfAbsent(
+                mc.getEstudiante().getIdEstudiante(), k -> new ArrayList<>()).add(mc);
+        }
+
+        List<Map<String, Object>> resultado = new ArrayList<>();
+
+        for (List<MembresiaCore> cadena : porEstudiante.values()) {
+            List<Map<String, Object>> cambios = new ArrayList<>();
+            LocalDate prevFin = null;
+            boolean encadenado = false;
+
+            for (MembresiaCore mc : cadena) {
+                BigDecimal valorPago = mc.getPagoOrigen().getValor();
+                Integer mesesEsperados = duracionPorPrecio.get(valorPago);
+
+                if (mesesEsperados == null) {
+                    // Valor no corresponde a ningún plan → detener cascada aquí
+                    prevFin = mc.getFechaFin();
+                    encadenado = false;
+                    continue;
+                }
+
+                LocalDate correctInicio = (encadenado && prevFin != null) ? prevFin : mc.getFechaInicio();
+                int diaPago = correctInicio.getDayOfMonth();
+                LocalDate correctFin = calcularFechaFin(correctInicio, mesesEsperados, diaPago);
+
+                boolean inicioDistinto = !correctInicio.equals(mc.getFechaInicio());
+                boolean finDistinto    = !correctFin.equals(mc.getFechaFin());
+
+                if (inicioDistinto || finDistinto) {
+                    Map<String, Object> cambio = new LinkedHashMap<>();
+                    cambio.put("idMembresiaCore",     mc.getIdMembresiaCore());
+                    cambio.put("idPago",              mc.getPagoOrigen().getIdPago());
+                    cambio.put("valorPago",           valorPago);
+                    cambio.put("mesesEsperados",      mesesEsperados);
+                    cambio.put("fechaInicioActual",   mc.getFechaInicio());
+                    cambio.put("fechaFinActual",      mc.getFechaFin());
+                    cambio.put("fechaInicioCorregida", correctInicio);
+                    cambio.put("fechaFinCorregida",   correctFin);
+                    cambios.add(cambio);
+                    encadenado = true;
+                }
+
+                prevFin = correctFin;
+            }
+
+            if (!cambios.isEmpty()) {
+                Estudiante est = cadena.get(0).getEstudiante();
+                boolean alDia = prevFin != null && prevFin.isAfter(hoy);
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("idEstudiante",      est.getIdEstudiante());
+                item.put("nombreEstudiante",  est.getNombreCompleto());
+                item.put("estadoActual",      est.getEstadoPago());
+                item.put("estadoQueQuedara",  alDia ? "AL_DIA" : "EN_MORA");
+                item.put("cambios",           cambios);
+                resultado.add(item);
+            }
+        }
+
         return resultado;
     }
 
