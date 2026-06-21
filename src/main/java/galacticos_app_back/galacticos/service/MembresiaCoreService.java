@@ -161,25 +161,24 @@ public class MembresiaCoreService {
             desactivarActual(estudiante.getIdEstudiante());
 
             if (esActivo) {
-                // PENDIENTE_REGISTRO con fechaInicio asignada (reactivación o cambiarFechas manual):
-                // usar esa fecha como base en lugar de buscar la última FINALIZADA.
-                // Para cualquier otro tipo activo, continúa desde la última FINALIZADA.
                 LocalDate base;
-                if (activa.getTipoMembresia() == TipoMembresia.PENDIENTE_REGISTRO
-                        && activa.getFechaInicio() != null
-                        && activa.getFechaLimiteGracia() != null
-                        && !activa.getFechaLimiteGracia().isBefore(hoy)) {
-                    // Gracia aún vigente: el admin asignó una fecha de inicio con intención
-                    base = activa.getFechaInicio();
+                if (activa.getTipoMembresia() == TipoMembresia.PENDIENTE_REGISTRO) {
+                    boolean graciaVigente = activa.getFechaLimiteGracia() != null
+                            && !activa.getFechaLimiteGracia().isBefore(hoy);
+                    if (graciaVigente) {
+                        // Gracia vigente: el pago cubre el mismo período del PENDIENTE_REGISTRO
+                        base = activa.getFechaInicio();
+                    } else {
+                        // Gracia expirada: el pago abre un período nuevo desde hoy
+                        base = pago.getFechaPago() != null ? pago.getFechaPago() : hoy;
+                    }
                 } else {
-                    // PENDIENTE_REGISTRO/ACUERDO_PAGO con gracia vencida: usar última FINALIZADA
-                    // solo si terminó hace ≤15 días; si fue antes, arrancar desde fechaPago.
-                    // FINALIZADA: siempre arrancar desde la última FINALIZADA (sin límite de días).
-                    LocalDate ultimaFin = ultimaFechaFinFinalizada(estudiante.getIdEstudiante());
-                    boolean esPendiente = activa.getTipoMembresia() == TipoMembresia.PENDIENTE_REGISTRO
-                            || activa.getTipoMembresia() == TipoMembresia.ACUERDO_PAGO;
-                    if (ultimaFin != null && (!esPendiente || !ultimaFin.isBefore(hoy.minusDays(15)))) {
-                        base = ultimaFin;
+                    // Membresía real (ONLINE/EFECTIVO/ACUERDO_PAGO):
+                    // continuar desde su fechaFin si no pasaron más de 30 días,
+                    // si pasaron más de 30 días arrancar desde la fecha del pago.
+                    LocalDate fechaFinActiva = activa.getFechaFin();
+                    if (fechaFinActiva != null && !fechaFinActiva.isBefore(hoy.minusDays(30))) {
+                        base = fechaFinActiva;
                     } else {
                         base = pago.getFechaPago() != null ? pago.getFechaPago() : hoy;
                     }
@@ -1858,10 +1857,19 @@ public class MembresiaCoreService {
                     membresiaCoreRepository.findById(idMc).ifPresent(mc -> {
                         mc.setFechaInicio(nuevoInicio);
                         mc.setFechaFin(nuevoFin);
-                        // Si la nueva fechaFin es futura y estaba FINALIZADA → volver a PAGADA
-                        if (mc.getEstadoMembresia() == EstadoMembresia.FINALIZADA
-                                && nuevoFin.isAfter(hoy)) {
+                        // Reconciliar estadoMembresia y esActiva según fechas corregidas
+                        if (!nuevoFin.isAfter(hoy)) {
+                            // Vencida → FINALIZADA, no activa
+                            mc.setEstadoMembresia(EstadoMembresia.FINALIZADA);
+                            mc.setEsActiva(false);
+                        } else if (!nuevoInicio.isAfter(hoy)) {
+                            // Cubre hoy → activa
                             mc.setEstadoMembresia(EstadoMembresia.PAGADA);
+                            mc.setEsActiva(true);
+                        } else {
+                            // Futura (pago anticipado) → PAGADA sin activar
+                            mc.setEstadoMembresia(EstadoMembresia.PAGADA);
+                            mc.setEsActiva(false);
                         }
                         mc.setMotivoCambio("CORRECCION_DURACION_ONLINE");
                         mc.setFechaUltimoCambio(ahora());
@@ -1870,9 +1878,25 @@ public class MembresiaCoreService {
                     corregidas++;
                 }
 
+                // Si la mc activa del estudiante no estaba en el lote corregido
+                // pero su fechaFin ya pasó, desactivarla también
+                Integer idEst = (Integer) estudianteInfo.get("idEstudiante");
+                Set<Integer> idsMcCorregidos = cambios.stream()
+                        .map(c -> (Integer) c.get("idMembresiaCore"))
+                        .collect(java.util.stream.Collectors.toSet());
+                membresiaCoreRepository.findByEstudianteIdEstudianteAndEsActivaTrue(idEst)
+                        .ifPresent(mcActiva -> {
+                            if (!idsMcCorregidos.contains(mcActiva.getIdMembresiaCore())
+                                    && !mcActiva.getFechaFin().isAfter(hoy)) {
+                                mcActiva.setEsActiva(false);
+                                mcActiva.setEstadoMembresia(EstadoMembresia.FINALIZADA);
+                                mcActiva.setFechaUltimoCambio(ahora());
+                                membresiaCoreRepository.save(mcActiva);
+                            }
+                        });
+
                 // Actualizar estado del estudiante según lo que quedará
                 String estadoQueQuedara = (String) estudianteInfo.get("estadoQueQuedara");
-                Integer idEst = (Integer) estudianteInfo.get("idEstudiante");
                 estudianteRepository.findById(idEst).ifPresent(est -> {
                     Estudiante.EstadoPago nuevo = "AL_DIA".equals(estadoQueQuedara)
                             ? Estudiante.EstadoPago.AL_DIA
