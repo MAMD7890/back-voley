@@ -65,15 +65,18 @@ public class MembresiaCoreService {
         return 1;
     }
 
-    // Planes: ONLINE exacto (80k/150k/210k). EFECTIVO por rango.
+    // ONLINE: duración desde tabla plan por precioMatricula. EFECTIVO/TRANSFERENCIA: rangos fijos.
     private int calcularMesesDesdeValorPago(BigDecimal valor, Pago.MetodoPago metodo) {
         if (valor == null) return 0;
         BigDecimal v = valor.abs();
         if (metodo == Pago.MetodoPago.ONLINE) {
-            if (v.compareTo(new BigDecimal("210000")) == 0) return 3;
-            if (v.compareTo(new BigDecimal("150000")) == 0) return 2;
-            if (v.compareTo(new BigDecimal("80000"))  == 0) return 1;
-            return 0;
+            try {
+                Optional<Plan> plan = planRepository.findByPrecioMatricula(v);
+                if (plan.isPresent() && plan.get().getDuracionMeses() != null) {
+                    return plan.get().getDuracionMeses();
+                }
+            } catch (Exception ignored) {}
+            return 0; // sin coincidencia o error en BD → fallback a calcularMesesSegunMonto
         } else {
             if (v.compareTo(new BigDecimal("150000")) > 0) return 3;
             if (v.compareTo(new BigDecimal("90000"))  > 0) return 2;
@@ -1961,11 +1964,20 @@ public class MembresiaCoreService {
             if (!cambios.isEmpty()) {
                 Estudiante est = cadena.get(0).getEstudiante();
                 boolean alDia = prevFin != null && prevFin.isAfter(hoy);
+                String estadoQueQuedara = alDia ? "AL_DIA" : "EN_MORA";
+
+                // Si el estudiante está AL_DIA y la corrección lo dejaría EN_MORA,
+                // omitir — puede ser un ajuste manual intencional de fechas.
+                if (est.getEstadoPago() == Estudiante.EstadoPago.AL_DIA
+                        && "EN_MORA".equals(estadoQueQuedara)) {
+                    continue;
+                }
+
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("idEstudiante",      est.getIdEstudiante());
                 item.put("nombreEstudiante",  est.getNombreCompleto());
                 item.put("estadoActual",      est.getEstadoPago());
-                item.put("estadoQueQuedara",  alDia ? "AL_DIA" : "EN_MORA");
+                item.put("estadoQueQuedara",  estadoQueQuedara);
                 item.put("cambios",           cambios);
                 resultado.add(item);
             }
