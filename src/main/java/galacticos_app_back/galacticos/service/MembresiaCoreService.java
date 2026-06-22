@@ -8,7 +8,6 @@ import galacticos_app_back.galacticos.entity.MembresiaCore.OrigenAcuerdo;
 import galacticos_app_back.galacticos.entity.MembresiaCore.TipoMembresia;
 import galacticos_app_back.galacticos.repository.EstudianteRepository;
 import galacticos_app_back.galacticos.repository.MembresiaCoreRepository;
-import galacticos_app_back.galacticos.repository.MembresiaRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
 import galacticos_app_back.galacticos.repository.PlanRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,9 +29,6 @@ public class MembresiaCoreService {
 
     @Autowired
     private EstudianteRepository estudianteRepository;
-
-    @Autowired
-    private MembresiaRepository membresiaRepository;
 
     @Autowired
     private PagoRepository pagoRepository;
@@ -1103,9 +1099,18 @@ public class MembresiaCoreService {
     private Estudiante.EstadoPago resolverEstadoPago(MembresiaCore mc) {
         return switch (mc.getEstadoMembresia()) {
             case PAGADA -> Estudiante.EstadoPago.AL_DIA;
-            case PENDIENTE_PAGO -> mc.getTipoMembresia() == TipoMembresia.ACUERDO_PAGO
-                    ? Estudiante.EstadoPago.COMPROMISO_PAGO
-                    : Estudiante.EstadoPago.PENDIENTE;
+            case PENDIENTE_PAGO -> {
+                if (mc.getTipoMembresia() == TipoMembresia.ACUERDO_PAGO) {
+                    yield Estudiante.EstadoPago.COMPROMISO_PAGO;
+                }
+                if (mc.getTipoMembresia() == TipoMembresia.PENDIENTE_REGISTRO) {
+                    LocalDate hoy = hoy();
+                    boolean graciaVencida = (mc.getFechaLimiteGracia() != null && mc.getFechaLimiteGracia().isBefore(hoy))
+                            || (mc.getFechaFin() != null && mc.getFechaFin().isBefore(hoy));
+                    yield graciaVencida ? Estudiante.EstadoPago.EN_MORA : Estudiante.EstadoPago.PENDIENTE;
+                }
+                yield Estudiante.EstadoPago.PENDIENTE;
+            }
             case EN_MORA, FINALIZADA, COMPROMISO_INCUMPLIDO, CANCELADA ->
                     Estudiante.EstadoPago.EN_MORA;
         };
@@ -1839,86 +1844,14 @@ public class MembresiaCoreService {
             }
         }
 
-        // Fase 2: corregir duraciones incorrectas en membresías ONLINE existentes
-        LocalDate hoy = hoy();
-        List<Map<String, Object>> correciones = calcularCorreccionesDuracion(hoy);
-        int corregidas = 0;
-        int erroresCorreccion = 0;
-
-        for (Map<String, Object> estudianteInfo : correciones) {
-            try {
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> cambios = (List<Map<String, Object>>) estudianteInfo.get("cambios");
-                for (Map<String, Object> cambio : cambios) {
-                    Integer idMc = (Integer) cambio.get("idMembresiaCore");
-                    LocalDate nuevoInicio = (LocalDate) cambio.get("fechaInicioCorregida");
-                    LocalDate nuevoFin    = (LocalDate) cambio.get("fechaFinCorregida");
-
-                    membresiaCoreRepository.findById(idMc).ifPresent(mc -> {
-                        mc.setFechaInicio(nuevoInicio);
-                        mc.setFechaFin(nuevoFin);
-                        // Reconciliar estadoMembresia y esActiva según fechas corregidas
-                        if (!nuevoFin.isAfter(hoy)) {
-                            // Vencida → FINALIZADA, no activa
-                            mc.setEstadoMembresia(EstadoMembresia.FINALIZADA);
-                            mc.setEsActiva(false);
-                        } else if (!nuevoInicio.isAfter(hoy)) {
-                            // Cubre hoy → activa
-                            mc.setEstadoMembresia(EstadoMembresia.PAGADA);
-                            mc.setEsActiva(true);
-                        } else {
-                            // Futura (pago anticipado) → PAGADA sin activar
-                            mc.setEstadoMembresia(EstadoMembresia.PAGADA);
-                            mc.setEsActiva(false);
-                        }
-                        mc.setMotivoCambio("CORRECCION_DURACION_ONLINE");
-                        mc.setFechaUltimoCambio(ahora());
-                        membresiaCoreRepository.save(mc);
-                    });
-                    corregidas++;
-                }
-
-                // Si la mc activa del estudiante no estaba en el lote corregido
-                // pero su fechaFin ya pasó, desactivarla también
-                Integer idEst = (Integer) estudianteInfo.get("idEstudiante");
-                Set<Integer> idsMcCorregidos = cambios.stream()
-                        .map(c -> (Integer) c.get("idMembresiaCore"))
-                        .collect(java.util.stream.Collectors.toSet());
-                membresiaCoreRepository.findByEstudianteIdEstudianteAndEsActivaTrue(idEst)
-                        .ifPresent(mcActiva -> {
-                            if (!idsMcCorregidos.contains(mcActiva.getIdMembresiaCore())
-                                    && !mcActiva.getFechaFin().isAfter(hoy)) {
-                                mcActiva.setEsActiva(false);
-                                mcActiva.setEstadoMembresia(EstadoMembresia.FINALIZADA);
-                                mcActiva.setFechaUltimoCambio(ahora());
-                                membresiaCoreRepository.save(mcActiva);
-                            }
-                        });
-
-                // Actualizar estado del estudiante según lo que quedará
-                String estadoQueQuedara = (String) estudianteInfo.get("estadoQueQuedara");
-                estudianteRepository.findById(idEst).ifPresent(est -> {
-                    Estudiante.EstadoPago nuevo = "AL_DIA".equals(estadoQueQuedara)
-                            ? Estudiante.EstadoPago.AL_DIA
-                            : Estudiante.EstadoPago.EN_MORA;
-                    est.setEstadoPago(nuevo);
-                    estudianteRepository.save(est);
-                });
-            } catch (Exception e) {
-                erroresCorreccion++;
-            }
-        }
-
         Map<String, Object> resultado = new LinkedHashMap<>();
         resultado.put("job",                  "RecuperarMembresiasFaltantes");
-        resultado.put("fecha",                hoy.toString());
+        resultado.put("fecha",                hoy().toString());
         resultado.put("pagosHuerfanos",       huerfanos.size());
         resultado.put("estudiantesEvaluados", porEstudiante.size());
         resultado.put("creadas",              creadas);
         resultado.put("omitidas",             omitidas);
         resultado.put("errores",              errores);
-        resultado.put("duracionesCorregidas", corregidas);
-        resultado.put("erroresCorreccion",    erroresCorreccion);
         return resultado;
     }
 
