@@ -20,6 +20,7 @@ import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class MembresiaCoreService {
@@ -963,14 +964,19 @@ public class MembresiaCoreService {
         for (MembresiaCore mc : pendientes) {
             try {
                 mc.setEstadoMembresia(EstadoMembresia.FINALIZADA);
-                mc.setEsActiva(true);
                 mc.setMotivoCambio("GRACIA_VENCIDA_PASA_A_MORA");
                 mc.setFechaUltimoCambio(ahora());
-                membresiaCoreRepository.save(mc);
 
-                Estudiante estudiante = mc.getEstudiante();
-                estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
-                estudianteRepository.save(estudiante);
+                if (Boolean.TRUE.equals(mc.getEsActiva())) {
+                    // Nadie la desactivó → no hubo pago → queda activa como referencia y pasa a EN_MORA
+                    membresiaCoreRepository.save(mc);
+                    Estudiante estudiante = mc.getEstudiante();
+                    estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                    estudianteRepository.save(estudiante);
+                } else {
+                    // Ya fue desactivada por un pago → solo actualizar estadoMembresia, no reactivar
+                    membresiaCoreRepository.save(mc);
+                }
                 convertidas++;
             } catch (Exception e) {
                 errores++;
@@ -1535,11 +1541,20 @@ public class MembresiaCoreService {
 
     @Transactional
     public Map<String, Object> ejecutarJobCorregirAlDiaSinMembresia() {
+        LocalDate hoy = hoy();
+
+        // Fase A: resolver dobles activas (dos esActiva=true al mismo tiempo)
+        int doblesDesactivadas = resolverDoblesActivas(hoy);
+
+        // Fase B: corregir estudiantes EN_MORA que tienen membresía PAGADA vigente
+        int enMoraCorregidos = corregirEnMoraConPagadaVigente(hoy);
+
+        // Fase C: crear membresías faltantes para AL_DIA sin membresia_core (lógica original)
         List<Estudiante> afectados = estudianteRepository.findAlDiaSinMembresiaPagadaVigente();
 
-        int creadas  = 0;
-        int sinPago  = 0;
-        int errores  = 0;
+        int creadas = 0;
+        int sinPago = 0;
+        int errores = 0;
 
         for (Estudiante est : afectados) {
             try {
@@ -1562,12 +1577,100 @@ public class MembresiaCoreService {
 
         Map<String, Object> resultado = new LinkedHashMap<>();
         resultado.put("job", "CorregirAlDiaSinMembresia");
-        resultado.put("fecha", hoy().toString());
+        resultado.put("fecha", hoy.toString());
+        resultado.put("doblesActivas_desactivadas", doblesDesactivadas);
+        resultado.put("enMora_corregidos", enMoraCorregidos);
         resultado.put("afectados", afectados.size());
         resultado.put("creadas", creadas);
         resultado.put("sinPago", sinPago);
         resultado.put("errores", errores);
         return resultado;
+    }
+
+    private int resolverDoblesActivas(LocalDate hoy) {
+        List<MembresiaCore> todasActivas = membresiaCoreRepository.findAllByEsActivaTrue();
+
+        Map<Integer, List<MembresiaCore>> porEstudiante = todasActivas.stream()
+                .collect(Collectors.groupingBy(mc -> mc.getEstudiante().getIdEstudiante()));
+
+        int desactivadas = 0;
+        for (List<MembresiaCore> activas : porEstudiante.values()) {
+            if (activas.size() <= 1) continue;
+
+            MembresiaCore ganadora = elegirGanadora(activas, hoy);
+
+            for (MembresiaCore mc : activas) {
+                if (!mc.getIdMembresiaCore().equals(ganadora.getIdMembresiaCore())) {
+                    mc.setEsActiva(false);
+                    mc.setFechaUltimoCambio(ahora());
+                    mc.setMotivoCambio("CORRECCION_DOBLE_ACTIVA");
+                    membresiaCoreRepository.save(mc);
+                    desactivadas++;
+                }
+            }
+
+            // Si la ganadora es PAGADA vigente y el estudiante no está AL_DIA, corregirlo
+            Estudiante est = ganadora.getEstudiante();
+            if (ganadora.getEstadoMembresia() == EstadoMembresia.PAGADA
+                    && ganadora.getFechaFin() != null
+                    && !ganadora.getFechaFin().isBefore(hoy)
+                    && Boolean.TRUE.equals(est.getEstado())
+                    && est.getEstadoPago() != Estudiante.EstadoPago.AL_DIA) {
+                est.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                estudianteRepository.save(est);
+            }
+        }
+        return desactivadas;
+    }
+
+    private MembresiaCore elegirGanadora(List<MembresiaCore> activas, LocalDate hoy) {
+        // Prioridad 1: PAGADA cuyo período cubre hoy (fechaInicio <= hoy <= fechaFin)
+        Optional<MembresiaCore> actual = activas.stream()
+                .filter(mc -> mc.getEstadoMembresia() == EstadoMembresia.PAGADA
+                        && mc.getFechaInicio() != null && !mc.getFechaInicio().isAfter(hoy)
+                        && mc.getFechaFin() != null && !mc.getFechaFin().isBefore(hoy))
+                .min(Comparator.comparing(MembresiaCore::getFechaInicio));
+        if (actual.isPresent()) return actual.get();
+
+        // Prioridad 2: PAGADA futura vigente (anticipada) — la de inicio más próximo
+        Optional<MembresiaCore> futura = activas.stream()
+                .filter(mc -> mc.getEstadoMembresia() == EstadoMembresia.PAGADA
+                        && mc.getFechaFin() != null && !mc.getFechaFin().isBefore(hoy))
+                .min(Comparator.comparing(MembresiaCore::getFechaInicio,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
+        if (futura.isPresent()) return futura.get();
+
+        // Prioridad 3: Cualquier PAGADA — la de fechaFin más reciente
+        Optional<MembresiaCore> pagada = activas.stream()
+                .filter(mc -> mc.getEstadoMembresia() == EstadoMembresia.PAGADA)
+                .max(Comparator.comparing(MembresiaCore::getFechaFin,
+                        Comparator.nullsFirst(Comparator.naturalOrder())));
+        if (pagada.isPresent()) return pagada.get();
+
+        // Prioridad 4: La más reciente por id (fallback)
+        return activas.stream()
+                .max(Comparator.comparing(MembresiaCore::getIdMembresiaCore))
+                .orElse(activas.get(0));
+    }
+
+    private int corregirEnMoraConPagadaVigente(LocalDate hoy) {
+        List<Estudiante> enMoraActivos = estudianteRepository.findByEstado(true).stream()
+                .filter(e -> e.getEstadoPago() == Estudiante.EstadoPago.EN_MORA)
+                .collect(Collectors.toList());
+
+        int corregidos = 0;
+        for (Estudiante est : enMoraActivos) {
+            try {
+                if (membresiaCoreRepository.countMembresiasVigentes(est.getIdEstudiante(), hoy) > 0) {
+                    est.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                    estudianteRepository.save(est);
+                    corregidos++;
+                }
+            } catch (Exception e) {
+                // continuar con el siguiente
+            }
+        }
+        return corregidos;
     }
 
     private void crearMembresiaCorrigiendoAlDia(Estudiante est, Pago pago) {

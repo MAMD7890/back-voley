@@ -9,6 +9,7 @@ import galacticos_app_back.galacticos.entity.RecordatorioPago.EstadoEnvio;
 import galacticos_app_back.galacticos.entity.RecordatorioPago.TipoRecordatorio;
 import galacticos_app_back.galacticos.repository.EstudianteRepository;
 import galacticos_app_back.galacticos.repository.MembresiaHistorialRepository;
+import galacticos_app_back.galacticos.repository.MembresiaCoreRepository;
 import galacticos_app_back.galacticos.repository.MembresiaRepository;
 import galacticos_app_back.galacticos.repository.PagoRepository;
 import galacticos_app_back.galacticos.repository.RecordatorioPagoRepository;
@@ -60,6 +61,7 @@ public class TareasInternasService {
     private final PagoRepository pagoRepository;
     private final MetaWhatsAppService metaWhatsAppService;
     private final MembresiaHistorialRepository membresiaHistorialRepository;
+    private final MembresiaCoreRepository membresiaCoreRepository;
 
     private static final ZoneId ZONA_CO = ZoneId.of("America/Bogota");
 
@@ -140,6 +142,21 @@ public class TareasInternasService {
             if (estudiante.getEstadoPago() == Estudiante.EstadoPago.SIN_MEMBRESIA) continue;
 
             try {
+                // Si tiene membresía PAGADA vigente en membresia_core, el estado debe ser AL_DIA
+                // sin importar lo que diga la tabla antigua
+                long vigentesCore = membresiaCoreRepository.countMembresiasVigentes(
+                        estudiante.getIdEstudiante(), hoy);
+                if (vigentesCore > 0) {
+                    if (estudiante.getEstadoPago() != Estudiante.EstadoPago.AL_DIA) {
+                        log.info("   🔧 {} corregido: {} → AL_DIA (membresía_core PAGADA vigente)",
+                                estudiante.getNombreCompleto(), estudiante.getEstadoPago());
+                        estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
+                        estudianteRepository.save(estudiante);
+                        corregidos++;
+                    }
+                    continue;
+                }
+
                 List<Membresia> mems = membresiaRepository.findByEstudianteIdEstudiante(estudiante.getIdEstudiante());
                 Membresia reciente = mems.stream()
                         .filter(m -> m.getFechaFin() != null && Boolean.TRUE.equals(m.getEstado()))
