@@ -2248,4 +2248,260 @@ public class MembresiaCoreService {
         resultado.put("errores", errores);
         return resultado;
     }
+
+    // ─── Corrección puntual: CANCELADA con pago real + esActiva incorrecta ────
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> previsualizarCorreccionCanceladasConPago() {
+        LocalDate hoy = hoy();
+
+        // Fase 1: CANCELADA con pago real
+        List<MembresiaCore> canceladas = membresiaCoreRepository.findCanceladasConPagoReal();
+        List<Map<String, Object>> detalleCanceladas = new ArrayList<>();
+        Set<Integer> estudiantesAfectados = new LinkedHashSet<>();
+
+        for (MembresiaCore mc : canceladas) {
+            EstadoMembresia nuevoEstado = (mc.getFechaFin() != null && !mc.getFechaFin().isBefore(hoy))
+                    ? EstadoMembresia.PAGADA : EstadoMembresia.FINALIZADA;
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("idMembresiaCore", mc.getIdMembresiaCore());
+            item.put("idEstudiante", mc.getEstudiante().getIdEstudiante());
+            item.put("nombre", mc.getEstudiante().getNombreCompleto());
+            item.put("tipoMembresia", mc.getTipoMembresia());
+            item.put("estadoActual", mc.getEstadoMembresia());
+            item.put("estadoNuevo", nuevoEstado);
+            item.put("fechaInicio", mc.getFechaInicio());
+            item.put("fechaFin", mc.getFechaFin());
+            item.put("motivoCambioActual", mc.getMotivoCambio());
+            detalleCanceladas.add(item);
+            estudiantesAfectados.add(mc.getEstudiante().getIdEstudiante());
+        }
+
+        // Fase 2: estudiantes con FINALIZADA esActiva=true
+        List<Integer> conFinalizadaActiva = membresiaCoreRepository.findIdEstudiantesConFinalizadaActiva();
+        estudiantesAfectados.addAll(conFinalizadaActiva);
+
+        // Simular corrección para todos los afectados
+        List<Map<String, Object>> detalleCorreccion = new ArrayList<>();
+        for (Integer idEstudiante : estudiantesAfectados) {
+            List<MembresiaCore> todas = membresiaCoreRepository
+                    .findByEstudianteIdEstudianteOrderByFechaInicioDesc(idEstudiante);
+
+            // No simular si la activa es PENDIENTE_REGISTRO o ACUERDO_PAGO
+            Optional<MembresiaCore> activaOpt = todas.stream()
+                    .filter(m -> Boolean.TRUE.equals(m.getEsActiva())).findFirst();
+            if (activaOpt.isPresent()) {
+                TipoMembresia ta = activaOpt.get().getTipoMembresia();
+                if (ta == TipoMembresia.PENDIENTE_REGISTRO || ta == TipoMembresia.ACUERDO_PAGO) continue;
+            }
+
+            // Para el preview, tratar CANCELADA con pago como si ya estuviera restaurada
+            List<MembresiaCore> validas = todas.stream()
+                    .filter(m -> m.getEstadoMembresia() == EstadoMembresia.PAGADA
+                            || m.getEstadoMembresia() == EstadoMembresia.FINALIZADA
+                            || (m.getEstadoMembresia() == EstadoMembresia.CANCELADA
+                                && m.getPagoOrigen() != null
+                                && m.getTipoMembresia() != TipoMembresia.ACUERDO_PAGO
+                                && m.getTipoMembresia() != TipoMembresia.PENDIENTE_REGISTRO))
+                    .collect(Collectors.toList());
+
+            if (validas.isEmpty()) continue;
+
+            Optional<MembresiaCore> ganadOpt = determinarGanadoraPreview(validas, hoy);
+            if (!ganadOpt.isPresent()) continue;
+            MembresiaCore ganadora = ganadOpt.get();
+
+            MembresiaCore activaActual = activaOpt.orElse(null);
+            boolean yaCorrecta = activaActual != null
+                    && activaActual.getIdMembresiaCore().equals(ganadora.getIdMembresiaCore())
+                    && activaActual.getEstadoMembresia() != EstadoMembresia.CANCELADA;
+            if (yaCorrecta) continue;
+
+            boolean vigente = (ganadora.getEstadoMembresia() == EstadoMembresia.PAGADA
+                    || ganadora.getEstadoMembresia() == EstadoMembresia.CANCELADA)
+                    && ganadora.getFechaFin() != null && !ganadora.getFechaFin().isBefore(hoy);
+            EstadoMembresia estadoNuevoGanadora = vigente ? EstadoMembresia.PAGADA : EstadoMembresia.FINALIZADA;
+
+            Estudiante est = ganadora.getEstudiante();
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("idEstudiante", est.getIdEstudiante());
+            item.put("nombre", est.getNombreCompleto());
+            if (activaActual != null) {
+                Map<String, Object> aa = new LinkedHashMap<>();
+                aa.put("idMembresiaCore", activaActual.getIdMembresiaCore());
+                aa.put("tipo", activaActual.getTipoMembresia());
+                aa.put("estado", activaActual.getEstadoMembresia());
+                aa.put("fechaFin", activaActual.getFechaFin());
+                item.put("activaActual", aa);
+            } else {
+                item.put("activaActual", null);
+            }
+            Map<String, Object> an = new LinkedHashMap<>();
+            an.put("idMembresiaCore", ganadora.getIdMembresiaCore());
+            an.put("tipo", ganadora.getTipoMembresia());
+            an.put("estadoActual", ganadora.getEstadoMembresia());
+            an.put("estadoNuevo", estadoNuevoGanadora);
+            an.put("fechaFin", ganadora.getFechaFin());
+            item.put("activaNueva", an);
+            item.put("estadoPagoActual", est.getEstadoPago());
+            item.put("estadoPagoNuevo", vigente ? Estudiante.EstadoPago.AL_DIA : Estudiante.EstadoPago.EN_MORA);
+            detalleCorreccion.add(item);
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("job", "CorregirCanceladasConPago_PREVIEW");
+        resultado.put("fecha", hoy.toString());
+        resultado.put("canceladasConPago_encontradas", canceladas.size());
+        resultado.put("canceladasConPago_detalle", detalleCanceladas);
+        resultado.put("conFinalizadaActiva_encontradas", conFinalizadaActiva.size());
+        resultado.put("estudiantesQueSeCorregiran", detalleCorreccion.size());
+        resultado.put("detalle_correccion", detalleCorreccion);
+        return resultado;
+    }
+
+    @Transactional
+    public Map<String, Object> corregirCanceladasConPago() {
+        LocalDate hoy = hoy();
+        Set<Integer> estudiantesAfectados = new LinkedHashSet<>();
+
+        // Fase 1: CANCELADA con pago real → restaurar estadoMembresia
+        List<MembresiaCore> canceladas = membresiaCoreRepository.findCanceladasConPagoReal();
+        int canceladasRestauradas = 0;
+        int errores = 0;
+
+        for (MembresiaCore mc : canceladas) {
+            try {
+                EstadoMembresia nuevoEstado = (mc.getFechaFin() != null && !mc.getFechaFin().isBefore(hoy))
+                        ? EstadoMembresia.PAGADA
+                        : EstadoMembresia.FINALIZADA;
+                mc.setEstadoMembresia(nuevoEstado);
+                mc.setMotivoCambio("RESTAURADA_CANCELACION_INCORRECTA");
+                mc.setFechaUltimoCambio(ahora());
+                membresiaCoreRepository.save(mc);
+                canceladasRestauradas++;
+                estudiantesAfectados.add(mc.getEstudiante().getIdEstudiante());
+            } catch (Exception e) {
+                errores++;
+            }
+        }
+
+        // Fase 2: estudiantes con FINALIZADA esActiva=true (activa incorrecta)
+        List<Integer> conFinalizadaActiva = membresiaCoreRepository.findIdEstudiantesConFinalizadaActiva();
+        estudiantesAfectados.addAll(conFinalizadaActiva);
+
+        // Fase 3: recalcular esActiva y estadoPago para todos los afectados
+        int estudiantesCorregidos = 0;
+        for (Integer idEstudiante : estudiantesAfectados) {
+            try {
+                recalcularActivaYEstadoPorEstudiante(idEstudiante, hoy);
+                estudiantesCorregidos++;
+            } catch (Exception e) {
+                errores++;
+            }
+        }
+
+        Map<String, Object> resultado = new LinkedHashMap<>();
+        resultado.put("job", "CorregirCanceladasConPago");
+        resultado.put("fecha", hoy.toString());
+        resultado.put("canceladasEncontradas", canceladas.size());
+        resultado.put("canceladasRestauradas", canceladasRestauradas);
+        resultado.put("conFinalizadaActiva", conFinalizadaActiva.size());
+        resultado.put("estudiantesEvaluados", estudiantesAfectados.size());
+        resultado.put("estudiantesCorregidos", estudiantesCorregidos);
+        resultado.put("errores", errores);
+        return resultado;
+    }
+
+    private Optional<MembresiaCore> determinarGanadoraPreview(List<MembresiaCore> validas, LocalDate hoy) {
+        // P1: vigente (PAGADA o CANCELADA restaurable), inicio más temprano
+        Optional<MembresiaCore> opt = validas.stream()
+                .filter(m -> (m.getEstadoMembresia() == EstadoMembresia.PAGADA
+                        || m.getEstadoMembresia() == EstadoMembresia.CANCELADA)
+                        && m.getFechaFin() != null && !m.getFechaFin().isBefore(hoy))
+                .min(Comparator.comparing(MembresiaCore::getFechaInicio,
+                        Comparator.nullsLast(Comparator.naturalOrder())));
+        if (opt.isPresent()) return opt;
+        // P2: con pago real, fechaFin más reciente
+        opt = validas.stream()
+                .filter(m -> m.getFechaFin() != null && m.getPagoOrigen() != null)
+                .max(Comparator.comparing(MembresiaCore::getFechaFin));
+        if (opt.isPresent()) return opt;
+        // P3: cualquier válida, fechaFin más reciente
+        return validas.stream()
+                .filter(m -> m.getFechaFin() != null)
+                .max(Comparator.comparing(MembresiaCore::getFechaFin));
+    }
+
+    private void recalcularActivaYEstadoPorEstudiante(Integer idEstudiante, LocalDate hoy) {
+        List<MembresiaCore> todas = membresiaCoreRepository
+                .findByEstudianteIdEstudianteOrderByFechaInicioDesc(idEstudiante);
+
+        // No recalcular si la activa actual es PENDIENTE_REGISTRO o ACUERDO_PAGO
+        Optional<MembresiaCore> activaActualOpt = todas.stream()
+                .filter(m -> Boolean.TRUE.equals(m.getEsActiva())).findFirst();
+        if (activaActualOpt.isPresent()) {
+            TipoMembresia ta = activaActualOpt.get().getTipoMembresia();
+            if (ta == TipoMembresia.PENDIENTE_REGISTRO || ta == TipoMembresia.ACUERDO_PAGO) return;
+        }
+
+        List<MembresiaCore> validas = todas.stream()
+                .filter(m -> m.getEstadoMembresia() == EstadoMembresia.PAGADA
+                        || m.getEstadoMembresia() == EstadoMembresia.FINALIZADA)
+                .collect(Collectors.toList());
+
+        // Desactivar cualquier membresía no-válida marcada activa
+        todas.stream()
+                .filter(m -> Boolean.TRUE.equals(m.getEsActiva())
+                        && m.getEstadoMembresia() != EstadoMembresia.PAGADA
+                        && m.getEstadoMembresia() != EstadoMembresia.FINALIZADA)
+                .forEach(m -> {
+                    m.setEsActiva(false);
+                    m.setFechaUltimoCambio(ahora());
+                    membresiaCoreRepository.save(m);
+                });
+
+        if (validas.isEmpty()) return;
+
+        // P1: PAGADA vigente, inicio más temprano
+        MembresiaCore ganadora = validas.stream()
+                .filter(m -> m.getEstadoMembresia() == EstadoMembresia.PAGADA
+                        && m.getFechaFin() != null && !m.getFechaFin().isBefore(hoy))
+                .min(Comparator.comparing(MembresiaCore::getFechaInicio,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElse(null);
+
+        // P2: con pago real, fechaFin más reciente
+        if (ganadora == null) {
+            ganadora = validas.stream()
+                    .filter(m -> m.getFechaFin() != null && m.getPagoOrigen() != null)
+                    .max(Comparator.comparing(MembresiaCore::getFechaFin))
+                    .orElse(null);
+        }
+
+        // P3: cualquier válida, fechaFin más reciente
+        if (ganadora == null) {
+            ganadora = validas.stream()
+                    .filter(m -> m.getFechaFin() != null)
+                    .max(Comparator.comparing(MembresiaCore::getFechaFin))
+                    .orElse(validas.get(0));
+        }
+
+        final Integer idGanadora = ganadora.getIdMembresiaCore();
+        for (MembresiaCore mc : validas) {
+            boolean debeSerActiva = mc.getIdMembresiaCore().equals(idGanadora);
+            if (!Boolean.valueOf(debeSerActiva).equals(mc.getEsActiva())) {
+                mc.setEsActiva(debeSerActiva);
+                mc.setFechaUltimoCambio(ahora());
+                membresiaCoreRepository.save(mc);
+            }
+        }
+
+        Estudiante est = ganadora.getEstudiante();
+        if (Boolean.TRUE.equals(est.getEstado())) {
+            boolean vigente = ganadora.getEstadoMembresia() == EstadoMembresia.PAGADA
+                    && ganadora.getFechaFin() != null && !ganadora.getFechaFin().isBefore(hoy);
+            est.setEstadoPago(vigente ? Estudiante.EstadoPago.AL_DIA : Estudiante.EstadoPago.EN_MORA);
+            estudianteRepository.save(est);
+        }
+    }
 }

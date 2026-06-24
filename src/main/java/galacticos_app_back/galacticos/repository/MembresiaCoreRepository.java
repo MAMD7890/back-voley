@@ -159,6 +159,17 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
            "  OR (m.tipoMembresia = 'ONLINE'   AND m.pagoOrigen.metodoPago = 'EFECTIVO'))")
     List<MembresiaCore> findConTipoIncorrecto();
 
+    // Corrección canceladas: membresías CANCELADA que tienen pago real asociado
+    @Query("SELECT m FROM MembresiaCore m WHERE m.estadoMembresia = 'CANCELADA' " +
+           "AND m.pagoOrigen IS NOT NULL " +
+           "AND m.tipoMembresia NOT IN ('ACUERDO_PAGO', 'PENDIENTE_REGISTRO')")
+    List<MembresiaCore> findCanceladasConPagoReal();
+
+    // Corrección esActiva: estudiantes con membresía FINALIZADA marcada como activa
+    @Query("SELECT DISTINCT m.estudiante.idEstudiante FROM MembresiaCore m " +
+           "WHERE m.estadoMembresia = 'FINALIZADA' AND m.esActiva = true")
+    List<Integer> findIdEstudiantesConFinalizadaActiva();
+
     // Job 2 extendido: FINALIZADA esActiva=true cuyo fechaFin <= hoy y estudiante sigue AL_DIA
     @Query("SELECT m FROM MembresiaCore m WHERE m.estadoMembresia = 'FINALIZADA' " +
            "AND m.esActiva = true " +

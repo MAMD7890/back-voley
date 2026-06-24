@@ -156,6 +156,20 @@ public class MembresiaCoreController {
         return ResponseEntity.ok(membresiaCoreService.migrarAcuerdosPendientes());
     }
 
+    @GetMapping("/api/internal/membresias-core/jobs/corregir-canceladas-con-pago/preview")
+    public ResponseEntity<Map<String, Object>> jobCorregirCanceladasConPagoPreview(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.previsualizarCorreccionCanceladasConPago());
+    }
+
+    @PostMapping("/api/internal/membresias-core/jobs/corregir-canceladas-con-pago")
+    public ResponseEntity<Map<String, Object>> jobCorregirCanceladasConPago(
+            @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
+        if (!validarApiKey(apiKey)) return unauthorized();
+        return ResponseEntity.ok(membresiaCoreService.corregirCanceladasConPago());
+    }
+
     @PostMapping("/api/internal/membresias-core/migracion")
     public ResponseEntity<Map<String, Object>> migrar(
             @RequestHeader(value = "X-Internal-Api-Key", required = false) String apiKey) {
