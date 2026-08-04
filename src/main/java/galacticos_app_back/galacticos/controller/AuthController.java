@@ -172,6 +172,7 @@ public class AuthController {
             Usuario usuario = authService.getCurrentUser();
             AuthResponse.UserInfo userInfo = AuthResponse.UserInfo.builder()
                     .id(usuario.getIdUsuario())
+                    .idEstudiante(usuario.getEstudiante() != null ? usuario.getEstudiante().getIdEstudiante() : null)
                     .nombre(usuario.getNombre())
                     .email(usuario.getEmail())
                     .fotoUrl(usuario.getFotoUrl())

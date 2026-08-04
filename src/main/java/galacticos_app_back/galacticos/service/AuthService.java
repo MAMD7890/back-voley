@@ -263,6 +263,7 @@ public class AuthService {
 
         return AuthResponse.UserInfo.builder()
                 .id(usuario.getIdUsuario())
+                .idEstudiante(usuario.getEstudiante() != null ? usuario.getEstudiante().getIdEstudiante() : null)
                 .nombre(usuario.getNombre())
                 .email(usuario.getEmail())
                 .fotoUrl(usuario.getFotoUrl())
@@ -295,6 +296,7 @@ public class AuthService {
         
         return AuthResponse.UserInfo.builder()
                 .id(usuario.getIdUsuario())
+                .idEstudiante(usuario.getEstudiante() != null ? usuario.getEstudiante().getIdEstudiante() : null)
                 .nombre(usuario.getNombre())
                 .email(usuario.getEmail())
                 .fotoUrl(usuario.getFotoUrl())
@@ -364,7 +366,8 @@ public class AuthService {
         nuevoUsuario.setNumeroDocumento(numeroDocumento);
         nuevoUsuario.setTelefono(estudiante.getCelularEstudiante());
         nuevoUsuario.setEstado(true);
-        
+        nuevoUsuario.setEstudiante(estudiante);
+
         // Asignar rol STUDENT
         Rol studentRol = rolRepository.findByNombre("STUDENT")
                 .orElseThrow(() -> new RuntimeException("Rol STUDENT no encontrado"));
@@ -384,6 +387,7 @@ public class AuthService {
     private AuthResponse buildAuthResponse(Usuario usuario, String accessToken, String refreshToken) {
         AuthResponse.UserInfo userInfo = AuthResponse.UserInfo.builder()
                 .id(usuario.getIdUsuario())
+                .idEstudiante(usuario.getEstudiante() != null ? usuario.getEstudiante().getIdEstudiante() : null)
                 .nombre(usuario.getNombre())
                 .email(usuario.getEmail())
                 .fotoUrl(usuario.getFotoUrl())

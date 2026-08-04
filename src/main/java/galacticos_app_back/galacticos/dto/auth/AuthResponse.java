@@ -25,6 +25,7 @@ public class AuthResponse {
     @AllArgsConstructor
     public static class UserInfo {
         private Integer id;
+        private Integer idEstudiante;
         private String nombre;
         private String email;
         private String fotoUrl;
