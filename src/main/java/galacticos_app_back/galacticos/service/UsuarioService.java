@@ -49,20 +49,37 @@ public class UsuarioService {
     }
     
     public Usuario actualizar(Integer id, Usuario usuario) {
-        Optional<Usuario> existente = usuarioRepository.findById(id);
-        if (existente.isPresent()) {
-            usuario.setIdUsuario(id);
-            // Encriptar password si viene en texto plano y ha cambiado
-            if (usuario.getPassword() == null || usuario.getPassword().isBlank()) {
-                // No se proporcionó contraseña nueva → conservar la existente
-                usuario.setPassword(existente.get().getPassword());
-            } else if (!usuario.getPassword().startsWith("$2a$")) {
-                // Viene en texto plano → encriptar
-                usuario.setPassword(passwordEncoder.encode(usuario.getPassword()));
-            }
-            return usuarioRepository.save(usuario);
+        Usuario existente = usuarioRepository.findById(id).orElse(null);
+        if (existente == null) {
+            return null;
         }
-        return null;
+
+        // Solo se sobreescriben los campos que vienen informados en el request,
+        // para no borrar relaciones (p.ej. estudiante) u otros datos que el
+        // cliente no haya incluido en el body.
+        if (usuario.getNombre() != null) existente.setNombre(usuario.getNombre());
+        if (usuario.getEmail() != null) existente.setEmail(usuario.getEmail());
+        if (usuario.getFotoUrl() != null) existente.setFotoUrl(usuario.getFotoUrl());
+        if (usuario.getFotoNombre() != null) existente.setFotoNombre(usuario.getFotoNombre());
+        if (usuario.getTipoDocumento() != null) existente.setTipoDocumento(usuario.getTipoDocumento());
+        if (usuario.getNumeroDocumento() != null) existente.setNumeroDocumento(usuario.getNumeroDocumento());
+        if (usuario.getTelefono() != null) existente.setTelefono(usuario.getTelefono());
+        if (usuario.getEstado() != null) existente.setEstado(usuario.getEstado());
+        if (usuario.getRol() != null) existente.setRol(usuario.getRol());
+        if (usuario.getUsername() != null) existente.setUsername(usuario.getUsername());
+        if (usuario.getRequiereChangioPassword() != null) existente.setRequiereChangioPassword(usuario.getRequiereChangioPassword());
+        if (usuario.getEstudiante() != null) existente.setEstudiante(usuario.getEstudiante());
+
+        // Encriptar password solo si viene una nueva no vacía
+        if (usuario.getPassword() != null && !usuario.getPassword().isBlank()) {
+            if (usuario.getPassword().startsWith("$2a$")) {
+                existente.setPassword(usuario.getPassword());
+            } else {
+                existente.setPassword(passwordEncoder.encode(usuario.getPassword()));
+            }
+        }
+
+        return usuarioRepository.save(existente);
     }
     
     public void eliminar(Integer id) {
