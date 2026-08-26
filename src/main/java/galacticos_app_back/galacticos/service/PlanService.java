@@ -93,63 +93,30 @@ public class PlanService {
     }
     
     /**
-     * Actualizar un plan existente
+     * Actualizar un plan existente.
+     * Por regla de negocio, editar un plan solo puede cambiar su precio y su
+     * duración en meses (recalculando el precio mensual); el resto de campos
+     * (nombre, descripción, matrícula, visibilidad, etc.) son fijos una vez
+     * creado el plan y se ignoran aunque vengan en el body.
      */
     @Transactional
     public PlanDTO actualizarPlan(Integer idPlan, PlanDTO planDTO) {
         Plan plan = planRepository.findById(idPlan)
                 .orElseThrow(() -> new IllegalArgumentException("Plan no encontrado"));
-        
-        // Actualizar campos
-        if (planDTO.getNombre() != null && !planDTO.getNombre().trim().isEmpty()) {
-            // Verificar que el nuevo nombre no sea duplicado (excepto si es el mismo plan)
-            Optional<Plan> planExistente = planRepository.findByNombre(planDTO.getNombre());
-            if (planExistente.isPresent() && !planExistente.get().getIdPlan().equals(idPlan)) {
-                throw new IllegalArgumentException("Ya existe otro plan con ese nombre");
-            }
-            plan.setNombre(planDTO.getNombre());
-        }
-        
-        if (planDTO.getDescripcion() != null) {
-            plan.setDescripcion(planDTO.getDescripcion());
-        }
-        
+
         if (planDTO.getDuracionMeses() != null && planDTO.getDuracionMeses() > 0) {
             plan.setDuracionMeses(planDTO.getDuracionMeses());
         }
-        
+
         if (planDTO.getPrecio() != null && planDTO.getPrecio().compareTo(BigDecimal.ZERO) > 0) {
             plan.setPrecio(planDTO.getPrecio());
-            // Recalcular precio mensual
-            BigDecimal precioMensual = planDTO.getPrecio()
-                    .divide(new BigDecimal(plan.getDuracionMeses()), 2, RoundingMode.HALF_UP);
-            plan.setPrecioMensual(precioMensual);
         }
-        
-        if (planDTO.getDescripcionCorta() != null) {
-            plan.setDescripcionCorta(planDTO.getDescripcionCorta());
-        }
-        
-        if (planDTO.getActivo() != null) {
-            plan.setActivo(planDTO.getActivo());
-        }
-        
-        if (planDTO.getMasPopular() != null) {
-            plan.setMasPopular(planDTO.getMasPopular());
-        }
-        
-        if (planDTO.getOrdenVisualizacion() != null) {
-            plan.setOrdenVisualizacion(planDTO.getOrdenVisualizacion());
-        }
-        
-        if (planDTO.getPrecioMatricula() != null) {
-            plan.setPrecioMatricula(planDTO.getPrecioMatricula());
-        }
-        
-        if (planDTO.getDescripcionMatricula() != null) {
-            plan.setDescripcionMatricula(planDTO.getDescripcionMatricula());
-        }
-        
+
+        // Recalcular precio mensual si cambió el precio y/o la duración
+        BigDecimal precioMensual = plan.getPrecio()
+                .divide(new BigDecimal(plan.getDuracionMeses()), 2, RoundingMode.HALF_UP);
+        plan.setPrecioMensual(precioMensual);
+
         Plan planActualizado = planRepository.save(plan);
         return convertirADTO(planActualizado);
     }

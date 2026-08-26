@@ -1,6 +1,8 @@
 package galacticos_app_back.galacticos.service;
 
+import galacticos_app_back.galacticos.entity.Estudiante;
 import galacticos_app_back.galacticos.entity.Usuario;
+import galacticos_app_back.galacticos.repository.EstudianteRepository;
 import galacticos_app_back.galacticos.repository.UsuarioRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -10,10 +12,13 @@ import java.util.Optional;
 
 @Service
 public class UsuarioService {
-    
+
     @Autowired
     private UsuarioRepository usuarioRepository;
-    
+
+    @Autowired
+    private EstudianteRepository estudianteRepository;
+
     @Autowired
     private PasswordEncoder passwordEncoder;
     
@@ -41,6 +46,36 @@ public class UsuarioService {
     }
     
     public Usuario crear(Usuario usuario) {
+        // Si viene un idEstudiante en el body (usuario.estudiante.idEstudiante), se busca
+        // el Estudiante y se usan sus datos para completar los campos que el cliente no envió.
+        if (usuario.getEstudiante() != null && usuario.getEstudiante().getIdEstudiante() != null) {
+            Estudiante estudiante = estudianteRepository.findById(usuario.getEstudiante().getIdEstudiante())
+                    .orElseThrow(() -> new RuntimeException(
+                            "Estudiante no encontrado con ID: " + usuario.getEstudiante().getIdEstudiante()));
+            usuario.setEstudiante(estudiante);
+
+            if (usuario.getNombre() == null || usuario.getNombre().isBlank()) {
+                usuario.setNombre(estudiante.getNombreCompleto());
+            }
+            if (usuario.getEmail() == null || usuario.getEmail().isBlank()) {
+                usuario.setEmail(estudiante.getCorreoEstudiante());
+            }
+            if (usuario.getNumeroDocumento() == null || usuario.getNumeroDocumento().isBlank()) {
+                usuario.setNumeroDocumento(estudiante.getNumeroDocumento());
+            }
+            if (usuario.getTipoDocumento() == null || usuario.getTipoDocumento().isBlank()) {
+                usuario.setTipoDocumento(estudiante.getTipoDocumento() != null ? estudiante.getTipoDocumento().name() : null);
+            }
+            if (usuario.getTelefono() == null || usuario.getTelefono().isBlank()) {
+                usuario.setTelefono(estudiante.getCelularEstudiante());
+            }
+            if (usuario.getPassword() == null || usuario.getPassword().isBlank()) {
+                // Password temporal por defecto: el número de documento del estudiante
+                usuario.setPassword(estudiante.getNumeroDocumento());
+                usuario.setRequiereChangioPassword(true);
+            }
+        }
+
         // Encriptar password si viene en texto plano
         if (usuario.getPassword() != null && !usuario.getPassword().startsWith("$2a$")) {
             usuario.setPassword(passwordEncoder.encode(usuario.getPassword()));
