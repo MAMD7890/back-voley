@@ -1,5 +1,6 @@
 package galacticos_app_back.galacticos.controller;
 
+import galacticos_app_back.galacticos.dto.RegistroAcuerdoCarteraDTO;
 import galacticos_app_back.galacticos.dto.RegistroPagoManualDTO;
 import galacticos_app_back.galacticos.dto.ReportePagoWompiDTO;
 import galacticos_app_back.galacticos.dto.ResumenPagosWompiDTO;
@@ -74,6 +75,23 @@ public class PagoController {
         }
     }
     
+    /**
+     * Registra un abono de cartera (paz y salvo con deudas). Se asocia al
+     * estudiante y aparece en el historial/reportes de pagos, pero NUNCA
+     * modifica membresías (ver PagoService.registrarAcuerdoCartera).
+     */
+    @PostMapping("/acuerdo-cartera")
+    public ResponseEntity<?> registrarAcuerdoCartera(@RequestBody RegistroAcuerdoCarteraDTO dto) {
+        try {
+            Pago pago = pagoService.registrarAcuerdoCartera(dto);
+            return ResponseEntity.ok(pago);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @PutMapping("/{id}")
     public ResponseEntity<Pago> actualizar(@PathVariable Integer id, @RequestBody Pago pago) {
         Pago actualizado = pagoService.actualizar(id, pago);

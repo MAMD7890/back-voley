@@ -65,20 +65,26 @@ public class WompiController {
             log.info("Generando firma de integridad para referencia: {}, idEstudiante: {}",
                     request.getReference(), request.getIdEstudiante());
 
-            // Validar que el monto corresponda exactamente al precio de un plan activo
+            // Validar que el monto corresponda exactamente al precio de un plan activo.
+            // Los abonos de cartera (referencia CARTERA-...) son montos arbitrarios para
+            // saldar deuda, no precios de plan, así que se excluyen de esta validación.
             if (request.getAmount() == null) {
                 return ResponseEntity.badRequest()
                         .body(MessageResponse.error("El monto es requerido"));
             }
-            List<Plan> planes = planRepository.findByActivoTrueOrderByOrdenVisualizacion();
-            boolean montoValido = planes.stream()
-                    .anyMatch(p -> p.getPrecio() != null &&
-                              p.getPrecio().compareTo(request.getAmount()) == 0);
-            if (!montoValido) {
-                log.warn("❌ Monto inválido para firma Wompi: {} — no coincide con ningún plan activo", request.getAmount());
-                return ResponseEntity.badRequest()
-                        .body(MessageResponse.error("El monto " + request.getAmount() +
-                              " no corresponde al precio de ningún plan activo"));
+            boolean esCartera = request.getReference() != null
+                    && request.getReference().startsWith(galacticos_app_back.galacticos.service.WompiService.PREFIJO_REFERENCIA_CARTERA);
+            if (!esCartera) {
+                List<Plan> planes = planRepository.findByActivoTrueOrderByOrdenVisualizacion();
+                boolean montoValido = planes.stream()
+                        .anyMatch(p -> p.getPrecio() != null &&
+                                  p.getPrecio().compareTo(request.getAmount()) == 0);
+                if (!montoValido) {
+                    log.warn("❌ Monto inválido para firma Wompi: {} — no coincide con ningún plan activo", request.getAmount());
+                    return ResponseEntity.badRequest()
+                            .body(MessageResponse.error("El monto " + request.getAmount() +
+                                  " no corresponde al precio de ningún plan activo"));
+                }
             }
 
             String currency = request.getCurrency() != null ? request.getCurrency() : "COP";
@@ -114,7 +120,23 @@ public class WompiController {
         response.put("reference", reference);
         return ResponseEntity.ok(response);
     }
-    
+
+    /**
+     * Genera una referencia única para un abono de cartera (paz y salvo con deudas).
+     * A diferencia de generate-reference, no está atada a un mes ni al precio de un plan.
+     *
+     * GET /api/wompi/generate-reference-cartera?idEstudiante=123
+     */
+    @GetMapping("/generate-reference-cartera")
+    public ResponseEntity<Map<String, String>> generateReferenceCartera(
+            @RequestParam Integer idEstudiante) {
+
+        String reference = wompiService.generateReferenceCartera(idEstudiante);
+        Map<String, String> response = new HashMap<>();
+        response.put("reference", reference);
+        return ResponseEntity.ok(response);
+    }
+
     /**
      * Crea un link de pago de Wompi
      */

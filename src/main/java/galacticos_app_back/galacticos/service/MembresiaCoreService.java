@@ -116,6 +116,10 @@ public class MembresiaCoreService {
 
     @Transactional
     public MembresiaCore crearMembresiaParaPago(Estudiante estudiante, Pago pago, TipoMembresia tipo) {
+        if (pago.getMetodoPago() == Pago.MetodoPago.ACUERDO_CARTERA) {
+            throw new IllegalArgumentException(
+                    "Un pago ACUERDO_CARTERA nunca debe generar membresía (pago " + pago.getIdPago() + ")");
+        }
         LocalDate hoy = hoy();
         int meses = calcularMesesDesdeValorPago(pago.getValor(), pago.getMetodoPago());
         if (meses == 0) meses = calcularMesesSegunMonto(pago.getValor()); // fallback

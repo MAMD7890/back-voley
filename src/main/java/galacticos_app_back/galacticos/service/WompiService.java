@@ -145,6 +145,101 @@ public class WompiService {
     public String generateReference(Integer idEstudiante, String mesPagado) {
         return "PAY-" + idEstudiante + "-" + mesPagado + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
     }
+
+    // ─── Abonos de cartera vía Wompi (ACUERDO_CARTERA) ────────────────────────
+    //
+    // Un abono de cartera es un pago para ponerse a paz y salvo con deudas.
+    // A propósito usa un prefijo de referencia distinto ("CARTERA-") para que
+    // sea identificable sin depender del campo metodoPago, y para que TODOS los
+    // puntos de esta clase que reconocen "PAY-" como "pago de membresía propio
+    // de la app" sepan reconocer también "CARTERA-" como "pago de cartera propio
+    // de la app, pero que NUNCA debe tocar estudiante.estadoPago ni disparar
+    // membresiaCoreService".
+
+    public static final String PREFIJO_REFERENCIA_CARTERA = "CARTERA-";
+
+    /**
+     * Genera una referencia única para un abono de cartera.
+     */
+    public String generateReferenceCartera(Integer idEstudiante) {
+        return PREFIJO_REFERENCIA_CARTERA + idEstudiante + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    }
+
+    private boolean esReferenciaCartera(String reference) {
+        return reference != null && reference.startsWith(PREFIJO_REFERENCIA_CARTERA);
+    }
+
+    private Integer extraerIdEstudianteDeReferenciaCartera(String reference) {
+        try {
+            String[] parts = reference.split("-");
+            if (parts.length >= 2) {
+                return Integer.parseInt(parts[1]);
+            }
+        } catch (Exception e) {
+            log.warn("No se pudo extraer ID del estudiante de referencia de cartera: {}", reference);
+        }
+        return null;
+    }
+
+    /**
+     * Marca PAGADO (o RECHAZADO) un pago de cartera YA EXISTENTE en BD.
+     * A propósito nunca toca estudiante.estadoPago ni llama a membresiaCoreService.
+     */
+    private void resolverPagoCarteraExistente(Pago pago, String status, String transactionId,
+                                               String reference, LocalDateTime fechaColombia) {
+        if ("APPROVED".equals(status)) {
+            pago.setEstadoPago(Pago.EstadoPago.PAGADO);
+        } else if ("DECLINED".equals(status) || "VOIDED".equals(status) || "ERROR".equals(status)) {
+            pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
+        }
+        if (fechaColombia != null) {
+            pago.setFechaPago(fechaColombia.toLocalDate());
+            pago.setHoraPago(fechaColombia.toLocalTime());
+        }
+        if (transactionId != null) pago.setWompiTransactionId(transactionId);
+        if (reference != null) pago.setReferenciaPago(reference);
+        pagoRepository.save(pago);
+        log.info("💰 Pago de cartera {} actualizado a {} - sin cambios de membresía/estudiante",
+                pago.getIdPago(), pago.getEstadoPago());
+    }
+
+    /**
+     * Crea (si no existe ya por transactionId) un Pago ACUERDO_CARTERA a partir de una
+     * referencia CARTERA-{idEstudiante}-... aprobada en Wompi. Nunca toca
+     * estudiante.estadoPago ni llama a membresiaCoreService.
+     */
+    private Pago crearPagoCarteraDesdeReferencia(String reference, String transactionId,
+                                                  Long amountInCents, String finalizedAt) {
+        Integer idEstudiante = extraerIdEstudianteDeReferenciaCartera(reference);
+        if (idEstudiante == null) return null;
+
+        Optional<Estudiante> estudianteOpt = estudianteRepository.findById(idEstudiante);
+        if (!estudianteOpt.isPresent()) {
+            log.warn("Estudiante no encontrado para pago de cartera - referencia: {}", reference);
+            return null;
+        }
+
+        if (transactionId != null) {
+            Optional<Pago> existente = pagoRepository.findByWompiTransactionId(transactionId);
+            if (existente.isPresent()) return existente.get();
+        }
+
+        LocalDateTime fechaColombia = convertirFechaWompiAColombia(finalizedAt);
+        Pago pago = new Pago();
+        pago.setEstudiante(estudianteOpt.get());
+        pago.setValor(amountInCents != null ? BigDecimal.valueOf(amountInCents / 100.0) : BigDecimal.ZERO);
+        pago.setMetodoPago(Pago.MetodoPago.ACUERDO_CARTERA);
+        pago.setEstadoPago(Pago.EstadoPago.PAGADO);
+        pago.setReferenciaPago(reference);
+        pago.setWompiTransactionId(transactionId);
+        pago.setFechaPago(fechaColombia.toLocalDate());
+        pago.setHoraPago(fechaColombia.toLocalTime());
+
+        Pago pagoGuardado = pagoRepository.save(pago);
+        log.info("💰 Pago de cartera creado desde Wompi - ID: {}, Estudiante: {}, sin cambios de membresía",
+                pagoGuardado.getIdPago(), idEstudiante);
+        return pagoGuardado;
+    }
     
 /**
  * Crea un link de pago en Wompi
@@ -400,7 +495,12 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             
             if (pagoOpt.isPresent()) {
                 Pago pago = pagoOpt.get();
-                
+
+                if (pago.getMetodoPago() == Pago.MetodoPago.ACUERDO_CARTERA) {
+                    resolverPagoCarteraExistente(pago, status, transactionId, reference, fechaColombia);
+                    return true;
+                }
+
                 if ("APPROVED".equals(status)) {
                     pago.setEstadoPago(Pago.EstadoPago.PAGADO);
                     pago.setFechaPago(fechaColombia.toLocalDate());
@@ -409,7 +509,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     if (reference != null) {
                         pago.setReferenciaPago(reference);
                     }
-                    
+
                     // Actualizar estado del estudiante
                     if (pago.getEstudiante() != null) {
                         Estudiante estudiante = pago.getEstudiante();
@@ -428,7 +528,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     pagoRepository.save(pago);
                     log.info("✅ Pago sincronizado correctamente - ID: {}", transactionId);
                     return true;
-                    
+
                 } else if ("DECLINED".equals(status) || "VOIDED".equals(status) || "ERROR".equals(status)) {
                     pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
                     pago.setFechaPago(fechaColombia.toLocalDate());
@@ -437,7 +537,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     if (reference != null) {
                         pago.setReferenciaPago(reference);
                     }
-                    
+
                     // Actualizar estado del estudiante a EN_MORA
                     if (pago.getEstudiante() != null) {
                         Estudiante estudiante = pago.getEstudiante();
@@ -447,7 +547,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                             log.info("❌ Estudiante {} marcado como EN_MORA por rechazo", estudiante.getIdEstudiante());
                         }
                     }
-                    
+
                     pagoRepository.save(pago);
                     log.info("❌ Pago rechazado sincronizado - ID: {}, Estado: {}", transactionId, status);
                     return true;
@@ -1039,8 +1139,8 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     }
                 } else {
                     // No hay pago pendiente con esa referencia, pero podríamos crear uno
-                    // si la referencia tiene el formato PAY-{idEstudiante}-...
-                    if (reference != null && reference.startsWith("PAY-")) {
+                    // si la referencia tiene el formato PAY-{idEstudiante}-... o CARTERA-{idEstudiante}-...
+                    if (reference != null && (reference.startsWith("PAY-") || esReferenciaCartera(reference))) {
                         try {
                             Pago nuevoPago = createPaymentFromWebhookInternal(
                                 reference, transactionId, amountInCents, finalizedAt, customerEmail);
@@ -1229,11 +1329,11 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                             }
                         }
 
-                        // 3. No existe nada — solo crear si la referencia es de esta app (PAY-)
-                        if (reference == null || !reference.startsWith("PAY-")) {
+                        // 3. No existe nada — solo crear si la referencia es de esta app (PAY- o CARTERA-)
+                        if (reference == null || !(reference.startsWith("PAY-") || esReferenciaCartera(reference))) {
                             detalle.put("resultado", "OMITIDO_REFERENCIA_EXTERNA");
                             sinMatch++;
-                            log.info("⏭️ Transacción {} omitida — referencia externa no PAY-: {}", transactionId, reference);
+                            log.info("⏭️ Transacción {} omitida — referencia externa no PAY-/CARTERA-: {}", transactionId, reference);
                             detalles.add(detalle);
                             continue;
                         }
@@ -1300,13 +1400,16 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
      */
     private Pago createPaymentFromWebhookInternal(String reference, String transactionId,
             Long amountInCents, String finalizedAt, String customerEmail) {
+        if (esReferenciaCartera(reference)) {
+            return crearPagoCarteraDesdeReferencia(reference, transactionId, amountInCents, finalizedAt);
+        }
         try {
             LocalDateTime fechaColombia = convertirFechaWompiAColombia(finalizedAt);
             BigDecimal monto = amountInCents != null ? BigDecimal.valueOf(amountInCents / 100.0) : BigDecimal.ZERO;
-            
+
             Estudiante estudiante = null;
             String mesPagado = null;
-            
+
             // Extraer ID del estudiante de la referencia
             if (reference != null && reference.startsWith("PAY-")) {
                 try {
@@ -1467,7 +1570,12 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 
                 if (pagoOpt.isPresent()) {
                     Pago pago = pagoOpt.get();
-                    
+
+                    if (pago.getMetodoPago() == Pago.MetodoPago.ACUERDO_CARTERA) {
+                        resolverPagoCarteraExistente(pago, status, transactionId, wompiReference, fechaColombia);
+                        return true;
+                    }
+
                     switch (status) {
                         case "APPROVED":
                             pago.setEstadoPago(Pago.EstadoPago.PAGADO);
@@ -1759,9 +1867,26 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                 // Si está aprobado y encontramos el pago, actualizarlo
                 if ("APPROVED".equals(wompiResponse.getStatus()) && pagoOpt.isPresent()) {
                     Pago pago = pagoOpt.get();
+
+                    if (pago.getMetodoPago() == Pago.MetodoPago.ACUERDO_CARTERA) {
+                        boolean yaEstabaPagado = pago.getEstadoPago() == Pago.EstadoPago.PAGADO;
+                        resolverPagoCarteraExistente(pago, "APPROVED", transactionId,
+                                wompiResponse.getReference(), fechaColombia);
+                        return responseBuilder
+                                .idPago(pago.getIdPago())
+                                .estadoPago(pago.getEstadoPago().name())
+                                .fechaPago(pago.getFechaPago())
+                                .horaPago(pago.getHoraPago())
+                                .pagoActualizado(!yaEstabaPagado)
+                                .estudianteActualizado(false)
+                                .success(true)
+                                .message("Pago de cartera confirmado exitosamente")
+                                .build();
+                    }
+
                     boolean pagoActualizado = false;
                     boolean estudianteActualizado = false;
-                    
+
                     // Actualizar pago si no está ya pagado
                     if (pago.getEstadoPago() != Pago.EstadoPago.PAGADO) {
                         pago.setEstadoPago(Pago.EstadoPago.PAGADO);
@@ -1818,9 +1943,23 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
                     // Manejar pagos rechazados
                     if (pagoOpt.isPresent()) {
                         Pago pago = pagoOpt.get();
+
+                        if (pago.getMetodoPago() == Pago.MetodoPago.ACUERDO_CARTERA) {
+                            resolverPagoCarteraExistente(pago, wompiResponse.getStatus(), transactionId,
+                                    wompiResponse.getReference(), fechaColombia);
+                            return responseBuilder
+                                    .idPago(pago.getIdPago())
+                                    .estadoPago(pago.getEstadoPago().name())
+                                    .pagoActualizado(true)
+                                    .estudianteActualizado(false)
+                                    .success(false)
+                                    .message("Pago de cartera rechazado por Wompi. Estado: " + wompiResponse.getStatus())
+                                    .build();
+                        }
+
                         boolean pagoActualizado = false;
                         boolean estudianteActualizado = false;
-                        
+
                         if (pago.getEstadoPago() != Pago.EstadoPago.RECHAZADO) {
                             pago.setEstadoPago(Pago.EstadoPago.RECHAZADO);
                             pago.setFechaPago(fechaColombia.toLocalDate());
@@ -2023,10 +2162,16 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
      * @param finalizedAt Timestamp de Wompi en formato ISO 8601 UTC (ej: "2026-03-02T14:03:07.000Z")
      */
     private Pago createPaymentFromReference(String reference, String transactionId, ConfirmacionPagoResponse wompiResponse, String finalizedAt) {
+        if (esReferenciaCartera(reference)) {
+            Long amountInCents = wompiResponse.getMonto() != null
+                    ? wompiResponse.getMonto().multiply(BigDecimal.valueOf(100)).longValue()
+                    : null;
+            return crearPagoCarteraDesdeReferencia(reference, transactionId, amountInCents, finalizedAt);
+        }
         try {
             // Convertir fecha de Wompi (UTC) a Colombia
             LocalDateTime fechaColombia = convertirFechaWompiAColombia(finalizedAt);
-            
+
             // Extraer datos de la referencia (formato: PAY-{idEstudiante}-{mes}-{random})
             String[] parts = reference.split("-");
             if (parts.length < 4 || !"PAY".equals(parts[0])) {
@@ -2105,8 +2250,14 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
      * @param customerEmail Email del cliente (usado solo como fallback)
      * @return Pago creado o null si no se pudo crear
      */
-    private Pago createPaymentFromWebhook(String wompiReference, String transactionId, 
+    private Pago createPaymentFromWebhook(String wompiReference, String transactionId,
             Long amountInCents, String finalizedAt, String customerEmail) {
+        if (esReferenciaCartera(wompiReference)) {
+            // Los pagos de cartera SIEMPRE se identifican por el prefijo de su referencia,
+            // nunca por fallback de email — evita atribuir por error un abono de cartera
+            // a un estudiante equivocado o tratarlo como pago ONLINE de membresía.
+            return crearPagoCarteraDesdeReferencia(wompiReference, transactionId, amountInCents, finalizedAt);
+        }
         try {
             LocalDateTime fechaColombia = convertirFechaWompiAColombia(finalizedAt);
             BigDecimal monto = amountInCents != null ? BigDecimal.valueOf(amountInCents / 100.0) : BigDecimal.ZERO;

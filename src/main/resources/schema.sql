@@ -195,7 +195,7 @@ CREATE TABLE pago (
     id_estudiante INT,
     mes_pagado VARCHAR(20),
     valor DECIMAL(10,2),
-    metodo_pago ENUM('ONLINE','EFECTIVO'),
+    metodo_pago ENUM('ONLINE','EFECTIVO','TRANSFERENCIA','ACUERDO_CARTERA'),
     referencia_pago VARCHAR(100),
     fecha_pago DATE,
     hora_pago TIME,

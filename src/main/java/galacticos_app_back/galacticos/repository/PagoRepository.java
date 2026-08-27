@@ -34,9 +34,11 @@ public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecifi
     @Query("SELECT p FROM Pago p WHERE p.estudiante.idEstudiante = :idEstudiante ORDER BY p.fechaPago DESC")
     List<Pago> findUltimoPagoByEstudiante(@Param("idEstudiante") Integer idEstudiante);
 
-    // Pagos PAGADOS de un estudiante ordenados por fecha ASC (para migración)
+    // Pagos PAGADOS de un estudiante ordenados por fecha ASC (para migración/recálculo de membresía).
+    // Excluye ACUERDO_CARTERA: esos pagos no deben contarse como meses de membresía.
     @Query("SELECT p FROM Pago p WHERE p.estudiante.idEstudiante = :idEstudiante " +
-           "AND p.estadoPago = 'PAGADO' ORDER BY p.fechaPago ASC, p.idPago ASC")
+           "AND p.estadoPago = 'PAGADO' AND p.metodoPago <> 'ACUERDO_CARTERA' " +
+           "ORDER BY p.fechaPago ASC, p.idPago ASC")
     List<Pago> findPagadosByEstudianteOrderByFechaAsc(@Param("idEstudiante") Integer idEstudiante);
     
     // Obtener pagos del mes actual
@@ -105,7 +107,8 @@ public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecifi
      */
     @Query("SELECT p FROM Pago p " +
            "WHERE p.estadoPago = 'PAGADO' " +
-           "AND (p.referenciaPago IS NULL OR p.referenciaPago NOT LIKE 'PAY-%')")
+           "AND (p.referenciaPago IS NULL OR p.referenciaPago NOT LIKE 'PAY-%') " +
+           "AND p.metodoPago <> 'ACUERDO_CARTERA'")
     List<Pago> findPagosExternos();
 
     // Corrección de duplicados: referencias PAY- que aparecen más de una vez
@@ -125,10 +128,13 @@ public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecifi
            "ORDER BY p.fechaPago DESC, p.idPago DESC")
     List<Pago> findPagadosOnlineSinMembresia();
 
-    // Pagos PAGADOS (ONLINE o EFECTIVO) de un estudiante sin membresía vinculada
+    // Pagos PAGADOS (ONLINE, EFECTIVO o TRANSFERENCIA) de un estudiante sin membresía vinculada.
+    // Excluye ACUERDO_CARTERA a propósito: esos pagos nunca deben disparar la
+    // creación automática de una membresía (jobs de reconciliación).
     @Query("SELECT p FROM Pago p " +
            "WHERE p.estudiante.idEstudiante = :idEstudiante " +
            "AND p.estadoPago = 'PAGADO' " +
+           "AND p.metodoPago <> 'ACUERDO_CARTERA' " +
            "AND NOT EXISTS (SELECT m FROM MembresiaCore m WHERE m.pagoOrigen = p) " +
            "ORDER BY p.fechaPago DESC, p.idPago DESC")
     List<Pago> findPagadosSinMembresiaByEstudiante(@Param("idEstudiante") Integer idEstudiante);

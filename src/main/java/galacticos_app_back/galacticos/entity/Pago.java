@@ -51,7 +51,14 @@ public class Pago {
     private String observacion;
 
     public enum MetodoPago {
-        ONLINE, EFECTIVO, TRANSFERENCIA
+        ONLINE, EFECTIVO, TRANSFERENCIA,
+        /**
+         * Abono para ponerse a paz y salvo con deudas/cartera vencida.
+         * A diferencia de los demás métodos, NUNCA debe usarse para crear,
+         * extender o recalcular una membresía (ver PagoRepository: las
+         * queries de reconciliación de membresías lo excluyen a propósito).
+         */
+        ACUERDO_CARTERA
     }
     
     public enum EstadoPago {

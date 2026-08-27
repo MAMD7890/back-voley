@@ -1,5 +1,6 @@
 package galacticos_app_back.galacticos.service;
 
+import galacticos_app_back.galacticos.dto.RegistroAcuerdoCarteraDTO;
 import galacticos_app_back.galacticos.dto.RegistroPagoManualDTO;
 import galacticos_app_back.galacticos.dto.ReportePagoWompiDTO;
 import galacticos_app_back.galacticos.dto.ResumenPagosWompiDTO;
@@ -110,6 +111,35 @@ public class PagoService {
         return resultado;
     }
     
+    /**
+     * Registra un abono de cartera (paz y salvo con deudas). Se guarda como un
+     * Pago normal, asociado al estudiante, pero a propósito NUNCA llama a
+     * membresiaCoreService: este tipo de pago no debe crear, extender ni
+     * recalcular ninguna membresía. Las queries de reconciliación de
+     * membresías en PagoRepository excluyen explícitamente ACUERDO_CARTERA
+     * para que ningún job automático lo termine convirtiendo en membresía.
+     */
+    @Transactional
+    public Pago registrarAcuerdoCartera(RegistroAcuerdoCarteraDTO dto) {
+        Estudiante estudiante = estudianteRepository.findById(dto.getIdEstudiante())
+                .orElseThrow(() -> new RuntimeException("Estudiante no encontrado: " + dto.getIdEstudiante()));
+
+        if (dto.getValor() == null || dto.getValor().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("El valor del abono debe ser mayor a 0");
+        }
+
+        Pago pago = new Pago();
+        pago.setEstudiante(estudiante);
+        pago.setValor(dto.getValor());
+        pago.setMetodoPago(Pago.MetodoPago.ACUERDO_CARTERA);
+        pago.setObservacion(dto.getObservacion());
+        pago.setFechaPago(LocalDate.now(ZoneId.of("America/Bogota")));
+        pago.setHoraPago(LocalTime.now(ZoneId.of("America/Bogota")));
+        pago.setEstadoPago(Pago.EstadoPago.PAGADO);
+        pago.setReferenciaPago("CARTERA-" + dto.getIdEstudiante() + "-" + System.currentTimeMillis());
+        return pagoRepository.save(pago);
+    }
+
     // Actualizar pago completo
     public Pago actualizar(Integer id, Pago pago) {
         Optional<Pago> existente = pagoRepository.findById(id);
