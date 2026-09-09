@@ -202,16 +202,18 @@ public class PagoService {
      * - desde/hasta: rango de fechaPago
      * - estado: string exacto comparado con estadoPago (ej: "PAGADO", "PENDIENTE")
      * - metodo: string exacto comparado con metodoPago (ej: "ONLINE", "EFECTIVO")
+     * - tipo: "CARTERA" (solo ACUERDO_CARTERA) o "MEMBRESIA" (todo lo demás). Si se
+     *   envían tipo y metodo a la vez, ambos se aplican (deben ser compatibles).
      * - busqueda: coincidencia parcial en nombre, email o referenciaPago
      * - idSede: id de la sede del estudiante
      */
     public Page<ReportePagoWompiDTO> obtenerReportePagosPaginado(
             int page, int size,
             LocalDate desde, LocalDate hasta,
-            String estado, String metodo, String busqueda, Integer idSede) {
+            String estado, String metodo, String tipo, String busqueda, Integer idSede) {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "fechaPago", "horaPago"));
-        Specification<Pago> spec = construirSpecPagos(desde, hasta, estado, metodo, busqueda, idSede);
+        Specification<Pago> spec = construirSpecPagos(desde, hasta, estado, metodo, tipo, busqueda, idSede);
 
         Page<Pago> pagos = pagoRepository.findAll(spec, pageable);
         return pagos.map(this::convertirAPagoWompiDTO);
@@ -224,7 +226,7 @@ public class PagoService {
      */
     private Specification<Pago> construirSpecPagos(
             LocalDate desde, LocalDate hasta,
-            String estado, String metodo, String busqueda, Integer idSede) {
+            String estado, String metodo, String tipo, String busqueda, Integer idSede) {
 
         Specification<Pago> spec = (root, query, cb) -> cb.conjunction();
 
@@ -243,6 +245,15 @@ public class PagoService {
         if (metodo != null && !metodo.isBlank()) {
             spec = spec.and((root, query, cb) ->
                     cb.equal(root.get("metodoPago").as(String.class), metodo.toUpperCase()));
+        }
+        if (tipo != null && !tipo.isBlank()) {
+            if ("CARTERA".equalsIgnoreCase(tipo)) {
+                spec = spec.and((root, query, cb) ->
+                        cb.equal(root.get("metodoPago").as(String.class), Pago.MetodoPago.ACUERDO_CARTERA.name()));
+            } else if ("MEMBRESIA".equalsIgnoreCase(tipo) || "MEMBRESÍA".equalsIgnoreCase(tipo)) {
+                spec = spec.and((root, query, cb) ->
+                        cb.notEqual(root.get("metodoPago").as(String.class), Pago.MetodoPago.ACUERDO_CARTERA.name()));
+            }
         }
         if (busqueda != null && !busqueda.isBlank()) {
             String pattern = "%" + busqueda.toLowerCase() + "%";
@@ -272,9 +283,9 @@ public class PagoService {
      */
     public byte[] exportarPagosExcel(
             LocalDate desde, LocalDate hasta,
-            String estado, String metodo, String busqueda, Integer idSede) {
+            String estado, String metodo, String tipo, String busqueda, Integer idSede) {
 
-        Specification<Pago> spec = construirSpecPagos(desde, hasta, estado, metodo, busqueda, idSede);
+        Specification<Pago> spec = construirSpecPagos(desde, hasta, estado, metodo, tipo, busqueda, idSede);
         List<Pago> pagos = pagoRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "fechaPago", "horaPago"));
 
         List<ReportePagoWompiDTO> filas = pagos.stream()

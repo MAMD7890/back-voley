@@ -133,7 +133,8 @@ public class PagoController {
      * Obtiene los pagos con paginación y filtros opcionales:
      * - desde/hasta: rango de fechaPago (formato ISO: yyyy-MM-dd)
      * - estado: string exacto del estado (PAGADO, PENDIENTE, VENCIDO, RECHAZADO)
-     * - metodo: string exacto del método (ONLINE, EFECTIVO)
+     * - metodo: string exacto del método (ONLINE, EFECTIVO, TRANSFERENCIA, ACUERDO_CARTERA)
+     * - tipo: "CARTERA" (solo ACUERDO_CARTERA) o "MEMBRESIA" (todo lo demás)
      * - busqueda: coincidencia parcial en nombre, email o referenciaPago
      */
     @GetMapping("/reportes/wompi/paginado")
@@ -144,9 +145,10 @@ public class PagoController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             @RequestParam(required = false) String estado,
             @RequestParam(required = false) String metodo,
+            @RequestParam(required = false) String tipo,
             @RequestParam(required = false) String busqueda,
             @RequestParam(required = false) Integer idSede) {
-        return ResponseEntity.ok(pagoService.obtenerReportePagosPaginado(page, size, desde, hasta, estado, metodo, busqueda, idSede));
+        return ResponseEntity.ok(pagoService.obtenerReportePagosPaginado(page, size, desde, hasta, estado, metodo, tipo, busqueda, idSede));
     }
 
     /**
@@ -155,6 +157,7 @@ public class PagoController {
      * - desde/hasta: rango de fechaPago (formato ISO: yyyy-MM-dd)
      * - estado: string exacto del estado (PAGADO, PENDIENTE, VENCIDO, RECHAZADO)
      * - metodo: string exacto del método (ONLINE, EFECTIVO, TRANSFERENCIA, ACUERDO_CARTERA)
+     * - tipo: "CARTERA" (solo ACUERDO_CARTERA) o "MEMBRESIA" (todo lo demás)
      * - busqueda: coincidencia parcial en nombre, email o referenciaPago
      * - idSede: id de la sede del estudiante
      */
@@ -164,10 +167,11 @@ public class PagoController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             @RequestParam(required = false) String estado,
             @RequestParam(required = false) String metodo,
+            @RequestParam(required = false) String tipo,
             @RequestParam(required = false) String busqueda,
             @RequestParam(required = false) Integer idSede) {
 
-        byte[] excel = pagoService.exportarPagosExcel(desde, hasta, estado, metodo, busqueda, idSede);
+        byte[] excel = pagoService.exportarPagosExcel(desde, hasta, estado, metodo, tipo, busqueda, idSede);
 
         String nombreArchivo = "pagos_" + LocalDate.now() + ".xlsx";
         return ResponseEntity.ok()
