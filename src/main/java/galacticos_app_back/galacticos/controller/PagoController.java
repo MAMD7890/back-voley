@@ -148,7 +148,35 @@ public class PagoController {
             @RequestParam(required = false) Integer idSede) {
         return ResponseEntity.ok(pagoService.obtenerReportePagosPaginado(page, size, desde, hasta, estado, metodo, busqueda, idSede));
     }
-    
+
+    /**
+     * Exporta a Excel (.xlsx) TODOS los pagos que cumplan los filtros — sin paginar.
+     * Mismos filtros que /reportes/wompi/paginado:
+     * - desde/hasta: rango de fechaPago (formato ISO: yyyy-MM-dd)
+     * - estado: string exacto del estado (PAGADO, PENDIENTE, VENCIDO, RECHAZADO)
+     * - metodo: string exacto del método (ONLINE, EFECTIVO, TRANSFERENCIA, ACUERDO_CARTERA)
+     * - busqueda: coincidencia parcial en nombre, email o referenciaPago
+     * - idSede: id de la sede del estudiante
+     */
+    @GetMapping("/reportes/wompi/exportar")
+    public ResponseEntity<byte[]> exportarPagosExcel(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
+            @RequestParam(required = false) String estado,
+            @RequestParam(required = false) String metodo,
+            @RequestParam(required = false) String busqueda,
+            @RequestParam(required = false) Integer idSede) {
+
+        byte[] excel = pagoService.exportarPagosExcel(desde, hasta, estado, metodo, busqueda, idSede);
+
+        String nombreArchivo = "pagos_" + LocalDate.now() + ".xlsx";
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=\"" + nombreArchivo + "\"")
+                .contentType(org.springframework.http.MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(excel);
+    }
+
     /**
      * Obtiene solo los pagos realizados online (Wompi)
      */

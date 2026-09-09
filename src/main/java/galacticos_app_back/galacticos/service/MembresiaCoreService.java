@@ -880,12 +880,31 @@ public class MembresiaCoreService {
         List<MembresiaCore> vencidas = membresiaCoreRepository.findPagadasVencidas(hoy);
 
         int procesadas = 0;
+        int superadas = 0;
         int omitidas = 0;
         int errores = 0;
 
         for (MembresiaCore mc : vencidas) {
             try {
                 Integer idEstudiante = mc.getEstudiante().getIdEstudiante();
+
+                // Si ya existe un período con fechaInicio POSTERIOR a este, esta fila es
+                // historial obsoleto (el estudiante ya siguió pagando) — se finaliza en
+                // silencio, sin tocar el estado del estudiante ni marcarla como "activa"
+                // (eso ya lo representa la fila más reciente). Esto evita el bloqueo mutuo
+                // que causaba countMembresiasActivasOEnMora cuando un estudiante acumulaba
+                // varias filas PAGADA vencidas sin corregir.
+                long periodosPosteriores = membresiaCoreRepository.countMembresiasConFechaInicioPosterior(
+                        idEstudiante, mc.getIdMembresiaCore(), mc.getFechaInicio());
+                if (periodosPosteriores > 0) {
+                    mc.setEstadoMembresia(EstadoMembresia.FINALIZADA);
+                    mc.setEsActiva(false);
+                    mc.setMotivoCambio("SUPERADA_POR_PERIODO_POSTERIOR");
+                    mc.setFechaUltimoCambio(ahora());
+                    membresiaCoreRepository.save(mc);
+                    superadas++;
+                    continue;
+                }
 
                 long otrasActivas = membresiaCoreRepository.countMembresiasActivasOEnMora(
                         idEstudiante, mc.getIdMembresiaCore());
@@ -949,6 +968,7 @@ public class MembresiaCoreService {
         resultado.put("fecha", hoy.toString());
         resultado.put("evaluadas", vencidas.size());
         resultado.put("finalizadasActivas", procesadas);
+        resultado.put("superadasPorPeriodoPosterior", superadas);
         resultado.put("omitidas", omitidas);
         resultado.put("corregidas", corregidas);
         resultado.put("errores", errores);

@@ -52,6 +52,18 @@ public interface MembresiaCoreRepository extends JpaRepository<MembresiaCore, In
             @Param("idEstudiante") Integer idEstudiante,
             @Param("excluirId") Integer excluirId);
 
+    // Job 2 — ¿existe otra membresía del mismo estudiante con fechaInicio POSTERIOR a esta?
+    // Si sí, esta fila es historial obsoleto (ya la superó un período más nuevo) y se puede
+    // finalizar en silencio sin tocar el estado del estudiante. A diferencia de
+    // countMembresiasActivasOEnMora, esto no se bloquea con otras filas igual de viejas
+    // y vencidas — solo con una genuinamente más reciente.
+    @Query("SELECT COUNT(m) FROM MembresiaCore m WHERE m.estudiante.idEstudiante = :idEstudiante " +
+           "AND m.idMembresiaCore <> :excluirId AND m.fechaInicio > :fechaInicio")
+    long countMembresiasConFechaInicioPosterior(
+            @Param("idEstudiante") Integer idEstudiante,
+            @Param("excluirId") Integer excluirId,
+            @Param("fechaInicio") LocalDate fechaInicio);
+
     // Job 3 — PENDIENTE_PAGO cuya gracia venció o cuya fechaFin ya pasó (pasan a EN_MORA)
     @Query("SELECT m FROM MembresiaCore m WHERE " +
            "m.estadoMembresia = 'PENDIENTE_PAGO' " +

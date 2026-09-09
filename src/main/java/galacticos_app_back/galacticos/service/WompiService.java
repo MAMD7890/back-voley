@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -165,6 +166,32 @@ public class WompiService {
         return PREFIJO_REFERENCIA_CARTERA + idEstudiante + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
     }
 
+    /**
+     * Guarda un Pago recién creado, protegiendo contra la condición de carrera donde
+     * dos peticiones concurrentes (ej. webhook de Wompi y confirmación del frontend
+     * llegando casi al mismo tiempo) intentan crear el mismo pago. Gracias al UNIQUE
+     * en referenciaPago/wompiTransactionId (ver entidad Pago), la segunda inserción
+     * falla en vez de crear un duplicado; en ese caso se recupera y devuelve la fila
+     * que ya quedó guardada por la primera.
+     */
+    private Pago guardarPagoEvitandoDuplicado(Pago pago) {
+        try {
+            return pagoRepository.save(pago);
+        } catch (DataIntegrityViolationException e) {
+            log.warn("⚠️ Posible pago duplicado evitado por condición de carrera — referencia: {}, transactionId: {}",
+                    pago.getReferenciaPago(), pago.getWompiTransactionId());
+            if (pago.getWompiTransactionId() != null) {
+                Optional<Pago> existente = pagoRepository.findByWompiTransactionId(pago.getWompiTransactionId());
+                if (existente.isPresent()) return existente.get();
+            }
+            if (pago.getReferenciaPago() != null) {
+                Optional<Pago> existente = pagoRepository.findFirstByReferenciaPagoOrderByIdPagoDesc(pago.getReferenciaPago());
+                if (existente.isPresent()) return existente.get();
+            }
+            throw e;
+        }
+    }
+
     private boolean esReferenciaCartera(String reference) {
         return reference != null && reference.startsWith(PREFIJO_REFERENCIA_CARTERA);
     }
@@ -223,6 +250,8 @@ public class WompiService {
             Optional<Pago> existente = pagoRepository.findByWompiTransactionId(transactionId);
             if (existente.isPresent()) return existente.get();
         }
+        Optional<Pago> existentePorReferencia = pagoRepository.findFirstByReferenciaPagoOrderByIdPagoDesc(reference);
+        if (existentePorReferencia.isPresent()) return existentePorReferencia.get();
 
         LocalDateTime fechaColombia = convertirFechaWompiAColombia(finalizedAt);
         Pago pago = new Pago();
@@ -235,7 +264,7 @@ public class WompiService {
         pago.setFechaPago(fechaColombia.toLocalDate());
         pago.setHoraPago(fechaColombia.toLocalTime());
 
-        Pago pagoGuardado = pagoRepository.save(pago);
+        Pago pagoGuardado = guardarPagoEvitandoDuplicado(pago);
         log.info("💰 Pago de cartera creado desde Wompi - ID: {}, Estudiante: {}, sin cambios de membresía",
                 pagoGuardado.getIdPago(), idEstudiante);
         return pagoGuardado;
@@ -1484,7 +1513,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             pago.setFechaPago(fechaColombia.toLocalDate());
             pago.setHoraPago(fechaColombia.toLocalTime());
             
-            Pago pagoGuardado = pagoRepository.save(pago);
+            Pago pagoGuardado = guardarPagoEvitandoDuplicado(pago);
 
             // Actualizar estudiante y crear membresía en membresia_core
             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
@@ -2210,7 +2239,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             pago.setFechaPago(fechaColombia.toLocalDate());
             pago.setHoraPago(fechaColombia.toLocalTime());
             
-            Pago pagoGuardado = pagoRepository.save(pago);
+            Pago pagoGuardado = guardarPagoEvitandoDuplicado(pago);
             
             // Actualizar estudiante y crear membresía en membresia_core
             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
@@ -2337,7 +2366,7 @@ public WompiPaymentLinkResponse createPaymentLink(WompiPaymentLinkRequest reques
             pago.setFechaPago(fechaColombia.toLocalDate());
             pago.setHoraPago(fechaColombia.toLocalTime());
             
-            Pago pagoGuardado = pagoRepository.save(pago);
+            Pago pagoGuardado = guardarPagoEvitandoDuplicado(pago);
             
             // Actualizar estado del estudiante a AL_DIA
             estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);

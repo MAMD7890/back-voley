@@ -32,19 +32,23 @@ public class Pago {
     @Enumerated(EnumType.STRING)
     private MetodoPago metodoPago;
     
-    @Column(length = 100)
+    // unique=true evita a nivel de BD que dos inserciones concurrentes (ej. webhook
+    // de Wompi y confirmación del frontend llegando casi al mismo tiempo) generen
+    // dos filas para el mismo pago. InnoDB permite múltiples NULL en un índice único,
+    // así que no afecta pagos legacy sin referencia.
+    @Column(length = 100, unique = true)
     private String referenciaPago;
-    
+
     @Column
     private LocalDate fechaPago;
-    
+
     @Column
     private LocalTime horaPago;
-    
+
     @Enumerated(EnumType.STRING)
     private EstadoPago estadoPago;
-    
-    @Column(length = 100)
+
+    @Column(length = 100, unique = true)
     private String wompiTransactionId;
 
     @Column(length = 255)

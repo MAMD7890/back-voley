@@ -93,6 +93,24 @@ public class PagoService {
             throw new IllegalArgumentException("Este endpoint es solo para pagos manuales (EFECTIVO o TRANSFERENCIA)");
         }
 
+        // Evitar duplicados por doble clic / doble envío del formulario: si ya existe
+        // un pago idéntico (mismo estudiante, mismo método, mismo valor) registrado
+        // hace pocos segundos, no crear otro.
+        Pago.MetodoPago metodoPago = dto.getMetodoPago() != null ? dto.getMetodoPago() : Pago.MetodoPago.EFECTIVO;
+        LocalTime ahora = LocalTime.now(ZoneId.of("America/Bogota"));
+        LocalDate hoy = LocalDate.now(ZoneId.of("America/Bogota"));
+        boolean posibleDuplicado = pagoRepository.findByEstudianteIdEstudiante(dto.getIdEstudiante()).stream()
+                .anyMatch(p -> p.getEstadoPago() == Pago.EstadoPago.PAGADO
+                        && p.getMetodoPago() == metodoPago
+                        && dto.getValor() != null && dto.getValor().compareTo(p.getValor() != null ? p.getValor() : java.math.BigDecimal.ZERO) == 0
+                        && hoy.equals(p.getFechaPago())
+                        && p.getHoraPago() != null
+                        && Math.abs(java.time.Duration.between(p.getHoraPago(), ahora).getSeconds()) < 15);
+        if (posibleDuplicado) {
+            throw new IllegalStateException(
+                    "Ya se registró un pago idéntico para este estudiante hace unos segundos. Evita registrarlo dos veces.");
+        }
+
         Pago pago = new Pago();
         pago.setEstudiante(estudiante);
         pago.setValor(dto.getValor());
@@ -193,6 +211,20 @@ public class PagoService {
             String estado, String metodo, String busqueda, Integer idSede) {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "fechaPago", "horaPago"));
+        Specification<Pago> spec = construirSpecPagos(desde, hasta, estado, metodo, busqueda, idSede);
+
+        Page<Pago> pagos = pagoRepository.findAll(spec, pageable);
+        return pagos.map(this::convertirAPagoWompiDTO);
+    }
+
+    /**
+     * Construye el filtro de búsqueda de pagos, usado tanto por el listado
+     * paginado como por la exportación a Excel — así ambos aplican exactamente
+     * los mismos criterios.
+     */
+    private Specification<Pago> construirSpecPagos(
+            LocalDate desde, LocalDate hasta,
+            String estado, String metodo, String busqueda, Integer idSede) {
 
         Specification<Pago> spec = (root, query, cb) -> cb.conjunction();
 
@@ -231,9 +263,94 @@ public class PagoService {
                 return cb.equal(est.get("sede").get("idSede"), idSede);
             });
         }
+        return spec;
+    }
 
-        Page<Pago> pagos = pagoRepository.findAll(spec, pageable);
-        return pagos.map(this::convertirAPagoWompiDTO);
+    /**
+     * Exporta a Excel (.xlsx) TODOS los pagos que cumplan los filtros — sin
+     * paginar — usando exactamente los mismos criterios que obtenerReportePagosPaginado.
+     */
+    public byte[] exportarPagosExcel(
+            LocalDate desde, LocalDate hasta,
+            String estado, String metodo, String busqueda, Integer idSede) {
+
+        Specification<Pago> spec = construirSpecPagos(desde, hasta, estado, metodo, busqueda, idSede);
+        List<Pago> pagos = pagoRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "fechaPago", "horaPago"));
+
+        List<ReportePagoWompiDTO> filas = pagos.stream()
+                .map(this::convertirAPagoWompiDTO)
+                .collect(Collectors.toList());
+
+        return generarExcelPagos(filas);
+    }
+
+    private byte[] generarExcelPagos(List<ReportePagoWompiDTO> filas) {
+        String[] encabezados = {
+                "ID Pago", "Referencia", "Transaction ID Wompi", "Monto", "Moneda",
+                "Fecha Pago", "Hora Pago", "Mes Pagado", "Método", "Estado", "Observación",
+                "ID Estudiante", "Nombre Estudiante", "Email Estudiante", "Teléfono Estudiante",
+                "Documento Estudiante"
+        };
+
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+
+            org.apache.poi.ss.usermodel.Sheet sheet = workbook.createSheet("Pagos");
+
+            org.apache.poi.ss.usermodel.CellStyle estiloEncabezado = workbook.createCellStyle();
+            org.apache.poi.ss.usermodel.Font fuenteEncabezado = workbook.createFont();
+            fuenteEncabezado.setBold(true);
+            estiloEncabezado.setFont(fuenteEncabezado);
+
+            org.apache.poi.ss.usermodel.Row filaEncabezado = sheet.createRow(0);
+            for (int i = 0; i < encabezados.length; i++) {
+                org.apache.poi.ss.usermodel.Cell celda = filaEncabezado.createCell(i);
+                celda.setCellValue(encabezados[i]);
+                celda.setCellStyle(estiloEncabezado);
+            }
+
+            int numFila = 1;
+            for (ReportePagoWompiDTO p : filas) {
+                org.apache.poi.ss.usermodel.Row fila = sheet.createRow(numFila++);
+                int col = 0;
+                setCelda(fila, col++, p.getIdPago());
+                setCelda(fila, col++, p.getReferenciaPago());
+                setCelda(fila, col++, p.getWompiTransactionId());
+                setCelda(fila, col++, p.getMonto() != null ? p.getMonto().doubleValue() : null);
+                setCelda(fila, col++, p.getMoneda());
+                setCelda(fila, col++, p.getFechaPago() != null ? p.getFechaPago().toString() : null);
+                setCelda(fila, col++, p.getHoraPago() != null ? p.getHoraPago().toString() : null);
+                setCelda(fila, col++, p.getMesPagado());
+                setCelda(fila, col++, p.getMetodoPago());
+                setCelda(fila, col++, p.getEstadoPago());
+                setCelda(fila, col++, p.getObservacion());
+                setCelda(fila, col++, p.getIdEstudiante());
+                setCelda(fila, col++, p.getNombreCompleto() != null ? p.getNombreCompleto() : p.getNombreEstudiante());
+                setCelda(fila, col++, p.getEmailEstudiante());
+                setCelda(fila, col++, p.getTelefonoEstudiante());
+                setCelda(fila, col, p.getDocumentoEstudiante());
+            }
+
+            for (int i = 0; i < encabezados.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+
+            workbook.write(out);
+            return out.toByteArray();
+        } catch (java.io.IOException e) {
+            throw new RuntimeException("Error generando el archivo Excel de pagos: " + e.getMessage(), e);
+        }
+    }
+
+    private void setCelda(org.apache.poi.ss.usermodel.Row fila, int col, Object valor) {
+        org.apache.poi.ss.usermodel.Cell celda = fila.createCell(col);
+        if (valor == null) {
+            celda.setBlank();
+        } else if (valor instanceof Number) {
+            celda.setCellValue(((Number) valor).doubleValue());
+        } else {
+            celda.setCellValue(valor.toString());
+        }
     }
     
     /**
