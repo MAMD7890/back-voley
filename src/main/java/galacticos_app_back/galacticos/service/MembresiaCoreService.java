@@ -516,7 +516,8 @@ public class MembresiaCoreService {
     @Transactional
     public MembresiaCoreDTO cambiarFechasPorEstudiante(Integer idEstudiante,
                                                         LocalDate nuevaFechaInicio,
-                                                        LocalDate nuevaFechaFin) {
+                                                        LocalDate nuevaFechaFin,
+                                                        Boolean activar) {
         if (nuevaFechaInicio == null && nuevaFechaFin == null) {
             throw new IllegalArgumentException("Debe enviar al menos fechaFin");
         }
@@ -525,113 +526,152 @@ public class MembresiaCoreService {
                 .orElseThrow(() -> new RuntimeException("Estudiante no encontrado: " + idEstudiante));
 
         LocalDate hoy = hoy();
+        // activar=null o true → crea/activa como membresía pagada y al día.
+        // activar=false → solo cambia fechas / crea como PENDIENTE_PAGO, sin marcar al día.
+        boolean quiereActiva = !Boolean.FALSE.equals(activar);
 
         Optional<MembresiaCore> activaOpt =
                 membresiaCoreRepository.findByEstudianteIdEstudianteAndEsActivaTrue(idEstudiante);
 
-        // ── Sin membresía activa ──────────────────────────────────────────────
+        // ── Sin membresía activa → crear una nueva ────────────────────────────
         if (activaOpt.isEmpty()) {
             if (nuevaFechaInicio == null) {
                 throw new IllegalArgumentException(
-                        "El estudiante no tiene membresía activa. Envíe fechaInicio y fechaFin para crear una nueva.");
+                        "El estudiante no tiene membresía activa. Envíe fechaInicio para crear una nueva.");
             }
-            LocalDate finFinal = nuevaFechaFin != null ? nuevaFechaFin
-                    : calcularFechaFin(nuevaFechaInicio, 1, nuevaFechaInicio.getDayOfMonth());
-            MembresiaCore nueva = buildPendienteManual(estudiante, nuevaFechaInicio, finFinal);
-            estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
-            estudianteRepository.save(estudiante);
-            return MembresiaCoreDTO.from(membresiaCoreRepository.save(nueva));
+            return MembresiaCoreDTO.from(
+                    crearMembresiaDesdeCambioFechas(estudiante, nuevaFechaInicio, nuevaFechaFin, quiereActiva, hoy));
         }
 
         MembresiaCore activa = activaOpt.get();
 
-        // ── Activa es PAGADA → actualizar fechas y re-evaluar estado ─────────
-        if (activa.getEstadoMembresia() == EstadoMembresia.PAGADA) {
-            if (nuevaFechaInicio != null) activa.setFechaInicio(nuevaFechaInicio);
-            if (nuevaFechaFin != null) activa.setFechaFin(nuevaFechaFin);
-            LocalDate finResultante = activa.getFechaFin();
-            if (finResultante != null && !finResultante.isAfter(hoy)) {
-                // fechaFin quedó en el pasado → vencida
-                activa.setEstadoMembresia(EstadoMembresia.FINALIZADA);
-                estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
-                estudianteRepository.save(estudiante);
-            }
-            activa.setMotivoCambio("FECHAS_AJUSTADAS_MANUALMENTE");
-            activa.setFechaUltimoCambio(ahora());
-            return MembresiaCoreDTO.from(membresiaCoreRepository.save(activa));
-        }
-
-        // ── Activa es FINALIZADA ──────────────────────────────────────────────
-        if (activa.getEstadoMembresia() == EstadoMembresia.FINALIZADA) {
-            if (nuevaFechaInicio != null && nuevaFechaFin != null) {
-                boolean inicioEnRango = activa.getFechaInicio() != null && activa.getFechaFin() != null
-                        && !nuevaFechaInicio.isBefore(activa.getFechaInicio())
-                        && !nuevaFechaInicio.isAfter(activa.getFechaFin());
-                boolean tienePago = activa.getPagoOrigen() != null;
-
-                if (inicioEnRango && tienePago) {
-                    // Ajustar fechas sobre la membresía existente (pago ya vinculado)
-                    activa.setFechaInicio(nuevaFechaInicio);
-                    activa.setFechaFin(nuevaFechaFin);
-                    if (nuevaFechaFin.isAfter(hoy)) {
-                        activa.setEstadoMembresia(EstadoMembresia.PAGADA);
-                        estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
-                    } else {
-                        estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
-                    }
-                    activa.setMotivoCambio("FECHAS_AJUSTADAS_MANUALMENTE");
-                    activa.setFechaUltimoCambio(ahora());
-                    estudianteRepository.save(estudiante);
-                    return MembresiaCoreDTO.from(membresiaCoreRepository.save(activa));
-                }
-
-                // Fecha inicio fuera del rango o sin pago → crear nueva PENDIENTE_REGISTRO
-                activa.setEsActiva(false);
-                activa.setFechaUltimoCambio(ahora());
-                membresiaCoreRepository.save(activa);
-                MembresiaCore nueva = buildPendienteManual(estudiante, nuevaFechaInicio, nuevaFechaFin);
-                estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
-                estudianteRepository.save(estudiante);
-                return MembresiaCoreDTO.from(membresiaCoreRepository.save(nueva));
-            }
-            // Solo fechaInicio → mover solo el inicio, conservar fechaFin y estado
-            if (nuevaFechaFin == null) {
-                activa.setFechaInicio(nuevaFechaInicio);
-                activa.setMotivoCambio("FECHAS_AJUSTADAS_MANUALMENTE");
-                activa.setFechaUltimoCambio(ahora());
-                return MembresiaCoreDTO.from(membresiaCoreRepository.save(activa));
-            }
-            // Solo fechaFin → mover fechaFin de la FINALIZADA activa
+        // ── Caso especial: FINALIZADA con pago YA vinculado y el nuevo inicio cae
+        // dentro de su propio rango original → es una corrección de fechas sobre
+        // un período ya cerrado y pagado; se edita en el sitio (no se reemplaza).
+        if (activa.getEstadoMembresia() == EstadoMembresia.FINALIZADA
+                && activa.getPagoOrigen() != null
+                && nuevaFechaInicio != null && nuevaFechaFin != null
+                && activa.getFechaInicio() != null && activa.getFechaFin() != null
+                && !nuevaFechaInicio.isBefore(activa.getFechaInicio())
+                && !nuevaFechaInicio.isAfter(activa.getFechaFin())) {
+            activa.setFechaInicio(nuevaFechaInicio);
             activa.setFechaFin(nuevaFechaFin);
             if (nuevaFechaFin.isAfter(hoy)) {
                 activa.setEstadoMembresia(EstadoMembresia.PAGADA);
                 estudiante.setEstadoPago(Estudiante.EstadoPago.AL_DIA);
-                estudianteRepository.save(estudiante);
-            } else if (estudiante.getEstadoPago() != Estudiante.EstadoPago.COMPROMISO_PAGO) {
-                // Solo pasar a EN_MORA si no tiene acuerdo de pago vigente —
-                // si tiene COMPROMISO_PAGO el Job 4 es quien decide cuándo pasa a EN_MORA
+            } else {
                 estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
-                estudianteRepository.save(estudiante);
+            }
+            activa.setMotivoCambio("FECHAS_AJUSTADAS_MANUALMENTE");
+            activa.setFechaUltimoCambio(ahora());
+            estudianteRepository.save(estudiante);
+            return MembresiaCoreDTO.from(membresiaCoreRepository.save(activa));
+        }
+
+        boolean esPendienteRegistro = activa.getTipoMembresia() == TipoMembresia.PENDIENTE_REGISTRO
+                || activa.getEstadoMembresia() == EstadoMembresia.PENDIENTE_PAGO;
+
+        // ── ¿Está la activa genuinamente vigente, o solo lo dice su estado? ───
+        boolean vigenteDeVerdad;
+        if (esPendienteRegistro) {
+            // Un "pendiente por pagar" nunca se edita para convertirlo en un período
+            // real y pagado — si se pide activar, siempre se reemplaza por una nueva.
+            if (quiereActiva) {
+                vigenteDeVerdad = false;
+            } else {
+                LocalDate limite = activa.getFechaLimiteGracia() != null
+                        ? activa.getFechaLimiteGracia()
+                        : (activa.getFechaInicio() != null ? activa.getFechaInicio().plusDays(15) : hoy.minusDays(1));
+                vigenteDeVerdad = !limite.isBefore(hoy);
+            }
+        } else if (activa.getEstadoMembresia() == EstadoMembresia.PAGADA) {
+            vigenteDeVerdad = activa.getFechaFin() != null && !activa.getFechaFin().isBefore(hoy);
+        } else {
+            // FINALIZADA (fuera del caso especial de arriba), EN_MORA, CANCELADA, etc.
+            vigenteDeVerdad = false;
+        }
+
+        if (vigenteDeVerdad) {
+            // ── Editar en el sitio — mismas reglas de siempre ─────────────────
+            if (nuevaFechaInicio != null) activa.setFechaInicio(nuevaFechaInicio);
+            if (nuevaFechaFin != null) activa.setFechaFin(nuevaFechaFin);
+            if (!esPendienteRegistro) {
+                LocalDate finResultante = activa.getFechaFin();
+                if (finResultante != null && !finResultante.isAfter(hoy)) {
+                    activa.setEstadoMembresia(EstadoMembresia.FINALIZADA);
+                    estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
+                    estudianteRepository.save(estudiante);
+                }
             }
             activa.setMotivoCambio("FECHAS_AJUSTADAS_MANUALMENTE");
             activa.setFechaUltimoCambio(ahora());
             return MembresiaCoreDTO.from(membresiaCoreRepository.save(activa));
         }
 
-        // ── Cualquier otro estado (PENDIENTE_PAGO, EN_MORA…) → actualizar fechas
-        if (nuevaFechaInicio != null) activa.setFechaInicio(nuevaFechaInicio);
-        if (nuevaFechaFin != null) activa.setFechaFin(nuevaFechaFin);
-        // Si la fechaFin resultante quedó en el pasado → pasar a EN_MORA
-        LocalDate finResultanteFinal = activa.getFechaFin();
-        if (finResultanteFinal != null && !finResultanteFinal.isAfter(hoy)
-                && activa.getEstadoMembresia() == EstadoMembresia.PENDIENTE_PAGO) {
-            activa.setEstadoMembresia(EstadoMembresia.EN_MORA);
-            estudiante.setEstadoPago(Estudiante.EstadoPago.EN_MORA);
-            estudianteRepository.save(estudiante);
+        // ── Reemplazar: la activa ya venció de verdad (o es un pendiente que se
+        // quiere activar) → se finaliza y se crea un período nuevo ───────────
+        if (nuevaFechaInicio == null) {
+            throw new IllegalArgumentException(
+                    "La membresía activa actual ya venció o está pendiente de confirmar; "
+                    + "envíe fechaInicio para crear el nuevo período.");
         }
-        activa.setMotivoCambio("FECHAS_AJUSTADAS_MANUALMENTE");
+        activa.setEsActiva(false);
+        activa.setEstadoMembresia(EstadoMembresia.FINALIZADA);
+        activa.setMotivoCambio("REEMPLAZADA_POR_NUEVAS_FECHAS_MANUAL");
         activa.setFechaUltimoCambio(ahora());
-        return MembresiaCoreDTO.from(membresiaCoreRepository.save(activa));
+        membresiaCoreRepository.save(activa);
+
+        return MembresiaCoreDTO.from(
+                crearMembresiaDesdeCambioFechas(estudiante, nuevaFechaInicio, nuevaFechaFin, quiereActiva, hoy));
+    }
+
+    /**
+     * Crea el nuevo período que resulta de un cambio manual de fechas.
+     * - activar=true: lo crea como membresía paga (PAGADA si la fecha fin sigue
+     *   vigente, si no FINALIZADA) y busca un pago huérfano (ACUERDO_CARTERA,
+     *   EFECTIVO o TRANSFERENCIA) del estudiante para vincularlo como pagoOrigen.
+     * - activar=false: lo crea como PENDIENTE_PAGO (igual que reactivar sin pago
+     *   vigente), sin vincular ningún pago ni marcar al estudiante al día.
+     */
+    private MembresiaCore crearMembresiaDesdeCambioFechas(Estudiante estudiante,
+            LocalDate fechaInicio, LocalDate fechaFinDada, boolean activar, LocalDate hoy) {
+
+        if (!activar) {
+            LocalDate finFinal = fechaFinDada != null ? fechaFinDada
+                    : calcularFechaFin(fechaInicio, 1, fechaInicio.getDayOfMonth());
+            MembresiaCore pendiente = buildPendienteManual(estudiante, fechaInicio, finFinal);
+            estudiante.setEstadoPago(Estudiante.EstadoPago.PENDIENTE);
+            estudianteRepository.save(estudiante);
+            return membresiaCoreRepository.save(pendiente);
+        }
+
+        Integer rawDiaPago = estudiante.getDiaPago();
+        int diaPago = rawDiaPago != null ? rawDiaPago : fechaInicio.getDayOfMonth();
+        LocalDate fechaFin = fechaFinDada != null ? fechaFinDada : calcularFechaFin(fechaInicio, 1, diaPago);
+
+        List<Pago> huerfanos = pagoRepository.findPagosManualesSinMembresiaByEstudiante(estudiante.getIdEstudiante());
+        Pago pagoOrigen = huerfanos.isEmpty() ? null : huerfanos.get(0);
+
+        boolean vigente = fechaFin.isAfter(hoy);
+
+        MembresiaCore nueva = new MembresiaCore();
+        nueva.setEstudiante(estudiante);
+        nueva.setPagoOrigen(pagoOrigen);
+        nueva.setTipoMembresia(TipoMembresia.EFECTIVO);
+        nueva.setEstadoMembresia(vigente ? EstadoMembresia.PAGADA : EstadoMembresia.FINALIZADA);
+        nueva.setFechaInicio(fechaInicio);
+        nueva.setFechaFin(fechaFin);
+        nueva.setValorMensual(pagoOrigen != null ? pagoOrigen.getValor() : null);
+        nueva.setEsActiva(true);
+        nueva.setFechaCreacion(ahora());
+        nueva.setFechaUltimoCambio(ahora());
+        nueva.setMotivoCambio("MEMBRESIA_CREADA_CAMBIO_FECHAS_MANUAL");
+
+        estudiante.setEstado(true);
+        estudiante.setEstadoPago(vigente ? Estudiante.EstadoPago.AL_DIA : Estudiante.EstadoPago.EN_MORA);
+        estudianteRepository.save(estudiante);
+
+        return membresiaCoreRepository.save(nueva);
     }
 
     private MembresiaCore buildPendienteManual(Estudiante estudiante,

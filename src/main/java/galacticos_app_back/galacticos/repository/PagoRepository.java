@@ -128,6 +128,21 @@ public interface PagoRepository extends JpaRepository<Pago, Integer>, JpaSpecifi
            "ORDER BY p.fechaPago DESC, p.idPago DESC")
     List<Pago> findPagadosOnlineSinMembresia();
 
+    /**
+     * Pagos PAGADOS "manuales" (ACUERDO_CARTERA, EFECTIVO o TRANSFERENCIA) de un estudiante
+     * sin membresía vinculada — a diferencia de findPagadosSinMembresiaByEstudiante, esta SÍ
+     * incluye ACUERDO_CARTERA a propósito. Es solo para el flujo manual de "cambiar fechas"
+     * (el admin vincula explícitamente un pago huérfano a la membresía nueva que crea);
+     * nunca la debe usar un job automático.
+     */
+    @Query("SELECT p FROM Pago p " +
+           "WHERE p.estudiante.idEstudiante = :idEstudiante " +
+           "AND p.estadoPago = 'PAGADO' " +
+           "AND p.metodoPago IN ('ACUERDO_CARTERA','EFECTIVO','TRANSFERENCIA') " +
+           "AND NOT EXISTS (SELECT m FROM MembresiaCore m WHERE m.pagoOrigen = p) " +
+           "ORDER BY p.fechaPago DESC, p.idPago DESC")
+    List<Pago> findPagosManualesSinMembresiaByEstudiante(@Param("idEstudiante") Integer idEstudiante);
+
     // Pagos PAGADOS (ONLINE, EFECTIVO o TRANSFERENCIA) de un estudiante sin membresía vinculada.
     // Excluye ACUERDO_CARTERA a propósito: esos pagos nunca deben disparar la
     // creación automática de una membresía (jobs de reconciliación).

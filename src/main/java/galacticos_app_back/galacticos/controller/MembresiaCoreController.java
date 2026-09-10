@@ -256,6 +256,14 @@ public class MembresiaCoreController {
 
     // ─── Cambiar fechas por idEstudiante ──────────────────────────────────────
 
+    /**
+     * body:
+     * - fechaInicio / fechaFin: al menos una de las dos (ISO yyyy-MM-dd)
+     * - activar: "true" (default) crea/activa el nuevo período como membresía
+     *   pagada y al día, vinculando un pago huérfano (cartera/efectivo/transferencia)
+     *   si existe. "false" solo ajusta fechas / crea el período como pendiente
+     *   por pagar, sin marcar al estudiante al día.
+     */
     @PatchMapping("/api/membresias-core/estudiante/{idEstudiante}/fechas")
     public ResponseEntity<?> cambiarFechasPorEstudiante(
             @PathVariable Integer idEstudiante,
@@ -269,8 +277,10 @@ public class MembresiaCoreController {
             }
             LocalDate nuevaFechaInicio = rawInicio != null ? LocalDate.parse(rawInicio) : null;
             LocalDate nuevaFechaFin    = rawFin    != null ? LocalDate.parse(rawFin)    : null;
+            String rawActivar = body.get("activar");
+            Boolean activar = rawActivar != null ? Boolean.valueOf(rawActivar) : null;
             MembresiaCoreDTO resultado = membresiaCoreService.cambiarFechasPorEstudiante(
-                    idEstudiante, nuevaFechaInicio, nuevaFechaFin);
+                    idEstudiante, nuevaFechaInicio, nuevaFechaFin, activar);
             return ResponseEntity.ok(resultado);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
